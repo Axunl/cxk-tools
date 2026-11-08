@@ -1,10 +1,13 @@
 #include "MainWindow.h"
 
+#include "HomePage.h"
 #include "IconBadge.h"
 #include "PluginManager.h"
 #include "Settings.h"
 #include "SettingsPage.h"
 #include "ToolRegistry.h"
+#include "ToolWindow.h"
+#include "WindowGeometry.h"
 
 #include <QCloseEvent>
 #include <QDesktopServices>
@@ -12,12 +15,9 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLineEdit>
-#include <QListWidget>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QResizeEvent>
-#include <QSet>
 #include <QSizeGrip>
 #include <QStackedWidget>
 #include <QUrl>
@@ -25,10 +25,13 @@
 #include <QWindow>
 
 namespace {
+
 // 布局常量集中在这里：改一处即可，避免魔法数字散落
 constexpr int kTitleHeight = 46;
-constexpr int kSidebarWidth = 208;
-constexpr int kIconSize = 20;
+constexpr int kPageMargin = 28;   ///< 页头与首页网格共用的左右留白，换页时标题不会跳
+constexpr int kDefaultWidth = 1120;
+constexpr int kDefaultHeight = 720;
+
 } // namespace
 
 MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager *plugins, QWidget *parent)
@@ -42,10 +45,13 @@ MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setWindowTitle(QStringLiteral("CXK 工具箱"));
     setMinimumSize(920, 580);
-    resize(1120, 720);
+
+    // 几何恢复要在 buildUi 之前：最小尺寸已设好，restore 才有意义
+    WindowGeometry::restore(this, m_settings->windowGeometry(QStringLiteral("main")),
+                            QSize(kDefaultWidth, kDefaultHeight));
 
     buildUi();
-    refreshSidebar();
+    showHome();   // 启动就停在首页网格
 }
 
 void MainWindow::buildUi()
@@ -78,6 +84,13 @@ void MainWindow::buildUi()
     m_hotkeyHint = new QLabel(m_settings->hotkey().toString(QKeySequence::NativeText), m_titleBar);
     m_hotkeyHint->setObjectName(QStringLiteral("titleHotkey"));
 
+    // 设置入口：侧边栏取消后没有别的常驻入口了（只剩托盘菜单），补一个齿轮
+    auto *settingsBtn = new QPushButton(QStringLiteral("\u2699"), m_titleBar);   // ⚙
+    settingsBtn->setObjectName(QStringLiteral("titleBtnSettings"));
+    settingsBtn->setFixedSize(30, 28);
+    settingsBtn->setCursor(Qt::PointingHandCursor);
+    settingsBtn->setToolTip(QStringLiteral("设置"));
+
     auto *minBtn = new QPushButton(QStringLiteral("\u2014"), m_titleBar);   // —
     minBtn->setObjectName(QStringLiteral("titleBtn"));
     minBtn->setFixedSize(30, 28);
@@ -93,114 +106,73 @@ void MainWindow::buildUi()
     tb->addSpacing(10);
     tb->addWidget(m_hotkeyHint);
     tb->addStretch(1);
+    tb->addWidget(settingsBtn);
     tb->addWidget(minBtn);
     tb->addWidget(closeBtn);
 
+    connect(settingsBtn, &QPushButton::clicked, this, &MainWindow::showSettings);
     connect(minBtn, &QPushButton::clicked, this, &QWidget::showMinimized);
     connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);   // closeEvent 会改成 hide
 
     rootLayout->addWidget(m_titleBar);
 
-    // ---------------------------------------------------------------- 主体
-    auto *content = new QWidget(root);
-    auto *contentLayout = new QHBoxLayout(content);
-    contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(0);
+    // ---------------------------------------------------------------- 页头 + 栈
+    auto *column = new QWidget(root);
+    auto *columnLayout = new QVBoxLayout(column);
+    columnLayout->setContentsMargins(0, 0, 0, 0);
+    columnLayout->setSpacing(0);
 
-    // 侧边栏
-    auto *side = new QWidget(content);
-    side->setObjectName(QStringLiteral("sidebar"));
-    side->setFixedWidth(kSidebarWidth);
+    m_pageHeader = new QWidget(column);
+    m_pageHeader->setObjectName(QStringLiteral("pageHeader"));
+    auto *headerLayout = new QHBoxLayout(m_pageHeader);
+    headerLayout->setContentsMargins(kPageMargin, 14, kPageMargin, 10);
+    headerLayout->setSpacing(12);
 
-    auto *sideLayout = new QVBoxLayout(side);
-    sideLayout->setContentsMargins(0, 10, 0, 10);
-    sideLayout->setSpacing(8);
+    m_pageBack = new QPushButton(QStringLiteral("\u2190  首页"), m_pageHeader);
+    m_pageBack->setObjectName(QStringLiteral("pageBack"));
+    m_pageBack->setCursor(Qt::PointingHandCursor);
 
-    m_searchEdit = new QLineEdit(side);
-    m_searchEdit->setObjectName(QStringLiteral("sideSearch"));
-    m_searchEdit->setPlaceholderText(QStringLiteral("搜索工具…"));
-    m_searchEdit->setClearButtonEnabled(true);
-    m_searchEdit->installEventFilter(this);   // 回车/上下/Esc
-    sideLayout->addWidget(m_searchEdit);
-
-    m_sideList = new QListWidget(side);
-    m_sideList->setObjectName(QStringLiteral("sideList"));
-    m_sideList->setFrameShape(QFrame::NoFrame);
-    m_sideList->setIconSize(QSize(kIconSize, kIconSize));
-    m_sideList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_sideList->setSelectionMode(QAbstractItemView::SingleSelection);
-
-    m_footer = new QLabel(side);
-    m_footer->setObjectName(QStringLiteral("sideFooter"));
-    m_footer->setAlignment(Qt::AlignCenter);
-
-    sideLayout->addWidget(m_sideList, 1);
-    sideLayout->addWidget(m_footer);
-
-    // 右侧：页头 + 面板栈
-    auto *right = new QWidget(content);
-    auto *rightLayout = new QVBoxLayout(right);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->setSpacing(0);
-
-    auto *header = new QWidget(right);
-    header->setObjectName(QStringLiteral("pageHeader"));
-    auto *headerLayout = new QVBoxLayout(header);
-    headerLayout->setContentsMargins(28, 16, 28, 12);
-    headerLayout->setSpacing(2);
-
-    m_toolTitle = new QLabel(header);
+    auto *titleBox = new QVBoxLayout;
+    titleBox->setContentsMargins(0, 0, 0, 0);
+    titleBox->setSpacing(2);
+    m_toolTitle = new QLabel(m_pageHeader);
     m_toolTitle->setObjectName(QStringLiteral("toolTitle"));
-    m_toolDesc = new QLabel(header);
+    m_toolDesc = new QLabel(m_pageHeader);
     m_toolDesc->setObjectName(QStringLiteral("toolDesc"));
-    headerLayout->addWidget(m_toolTitle);
-    headerLayout->addWidget(m_toolDesc);
+    titleBox->addWidget(m_toolTitle);
+    titleBox->addWidget(m_toolDesc);
 
-    m_stack = new QStackedWidget(right);
+    m_popoutBtn = new QPushButton(QStringLiteral("独立窗口"), m_pageHeader);
+    m_popoutBtn->setObjectName(QStringLiteral("pagePopout"));
+    m_popoutBtn->setCursor(Qt::PointingHandCursor);
+    m_popoutBtn->setToolTip(QStringLiteral("把这个工具开成单独的窗口，主窗口收起也不影响"));
+
+    headerLayout->addWidget(m_pageBack);
+    headerLayout->addLayout(titleBox);
+    headerLayout->addStretch(1);
+    headerLayout->addWidget(m_popoutBtn);
+
+    m_stack = new QStackedWidget(column);
     m_stack->setObjectName(QStringLiteral("toolStack"));
 
-    // 空状态页：一个工具都没加载到时显示，给一条"去哪放插件"的指引
-    m_emptyPage = new QWidget(m_stack);
-    auto *emptyLayout = new QVBoxLayout(m_emptyPage);
-    emptyLayout->setContentsMargins(40, 40, 40, 40);
-    emptyLayout->setSpacing(12);
-    emptyLayout->addStretch(1);
+    m_home = new HomePage(m_registry, m_settings, m_plugins, m_stack);
+    m_stack->addWidget(m_home);
 
-    auto *emptyTitle = new QLabel(QStringLiteral("还没有加载到任何工具"), m_emptyPage);
-    emptyTitle->setAlignment(Qt::AlignCenter);
-    emptyTitle->setStyleSheet(QStringLiteral("font-size:15px;font-weight:600;color:#0F172A;"));
-
-    auto *emptyDesc = new QLabel(
-        QStringLiteral("把编译好的插件动态库放进 plugins 目录，然后重启应用。\n"
-                       "想自己写一个工具，看 docs/PLUGIN.md（不到 30 行就能上手）。"),
-        m_emptyPage);
-    emptyDesc->setAlignment(Qt::AlignCenter);
-    emptyDesc->setStyleSheet(QStringLiteral("font-size:12px;color:#94A3B8;"));
-
-    auto *openDirBtn = new QPushButton(QStringLiteral("打开插件目录"), m_emptyPage);
-    openDirBtn->setProperty("accent", true);
-    openDirBtn->setFixedWidth(140);
-
-    auto *btnRow = new QHBoxLayout;
-    btnRow->addStretch(1);
-    btnRow->addWidget(openDirBtn);
-    btnRow->addStretch(1);
-
-    emptyLayout->addWidget(emptyTitle);
-    emptyLayout->addWidget(emptyDesc);
-    emptyLayout->addLayout(btnRow);
-    emptyLayout->addStretch(1);
-
-    connect(openDirBtn, &QPushButton::clicked, this, [this] {
-        const QString dir = m_plugins ? m_plugins->pluginDir() : QString();
-        QDir().mkpath(dir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
-    });
-    m_stack->addWidget(m_emptyPage);
-
-    // 设置页也塞进同一个栈：这样切换设置与工具共用页头，不另开窗口
     m_settingsPage = new SettingsPage(m_settings, m_plugins, m_stack);
     m_stack->addWidget(m_settingsPage);
+
+    columnLayout->addWidget(m_pageHeader);
+    columnLayout->addWidget(m_stack, 1);
+    rootLayout->addWidget(column, 1);
+
+    // 无边框窗口右下角的缩放抓手（QSizeGrip 在 resizeEvent 里重新定位）
+    new QSizeGrip(root);
+
+    connect(m_pageBack, &QPushButton::clicked, this, &MainWindow::showHome);
+    connect(m_popoutBtn, &QPushButton::clicked, this, [this] { popOutTool(m_currentToolId); });
+
+    connect(m_home, &HomePage::toolActivated, this, [this](const QString &id) { showTool(id); });
+    connect(m_home, &HomePage::toolPopOutRequested, this, &MainWindow::popOutTool);
 
     connect(m_settingsPage, &SettingsPage::restartRequested, this, &MainWindow::restartRequested);
     connect(m_settingsPage, &SettingsPage::hotkeyChanged, this, [this](const QKeySequence &seq) {
@@ -209,89 +181,15 @@ void MainWindow::buildUi()
             m_hotkeyHint->setText(seq.toString(QKeySequence::NativeText));
         emit hotkeyChanged(seq);
     });
-
-    rightLayout->addWidget(header);
-    rightLayout->addWidget(m_stack, 1);
-
-    contentLayout->addWidget(side);
-    contentLayout->addWidget(right, 1);
-    rootLayout->addWidget(content, 1);
-
-    // 无边框窗口右下角的缩放抓手（QSizeGrip 在 resizeEvent 里重新定位）
-    new QSizeGrip(root);
-
-    connect(m_sideList, &QListWidget::currentRowChanged, this, [this](int row) {
-        if (row < 0)
-            return;
-        const QString id = m_sideList->item(row)->data(Qt::UserRole).toString();
-        if (!id.isEmpty())
-            showTool(id);
-    });
-
-    connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
-        applySidebarFilter(text);
-    });
 }
 
-void MainWindow::refreshSidebar()
+void MainWindow::createToolPanel(const QString &toolId)
 {
-    // QSignalBlocker：clear()/addItem 会触发 currentRowChanged，
-    // 不挡住就会在刷新过程中顺手切换工具
-    const QSignalBlocker blocker(m_sideList);
-    m_sideList->clear();
-
-    for (const ToolEntry &entry : m_registry->entries()) {
-        auto *item = new QListWidgetItem(entry.icon, entry.name(), m_sideList);
-        item->setData(Qt::UserRole, entry.info.id);
-        item->setToolTip(entry.info.description);
-    }
-
-    const int n = m_registry->count();
-    const int failed = m_plugins ? m_plugins->errors().size() : 0;
-    m_footer->setText(failed > 0
-                          ? QStringLiteral("已加载 %1 个工具 · %2 个失败").arg(n).arg(failed)
-                          : QStringLiteral("已加载 %1 个工具").arg(n));
-}
-
-void MainWindow::applySidebarFilter(const QString &text)
-{
-    const QString q = text.trimmed();
-    if (q.isEmpty()) {
-        for (int i = 0; i < m_sideList->count(); ++i)
-            m_sideList->item(i)->setHidden(false);
-        return;
-    }
-
-    // 复用 ToolRegistry 的相关度排序取命中集，但只做显隐、保留侧边栏原始顺序：
-    // 过滤时列表项位置还是稳定的，用户的肌肉记忆不会被打乱。
-    const QStringList hits = m_registry->search(q, 1000);
-    QSet<QString> hitSet;
-    hitSet.reserve(hits.size());
-    for (const QString &id : hits)
-        hitSet.insert(id);
-
-    for (int i = 0; i < m_sideList->count(); ++i) {
-        const QString id = m_sideList->item(i)->data(Qt::UserRole).toString();
-        m_sideList->item(i)->setHidden(!hitSet.contains(id));
-    }
-}
-
-void MainWindow::updateHeader(const QString &title, const QString &desc)
-{
-    m_toolTitle->setText(title);
-    m_toolDesc->setText(desc);
-}
-
-QWidget *MainWindow::panelFor(const QString &toolId)
-{
-    // 命中缓存就直接返回：面板里的输入状态因此能跨切换保留
-    const auto it = m_pages.constFind(toolId);
-    if (it != m_pages.constEnd())
-        return m_stack->widget(it.value());
-
+    // 面板不缓存：每次进入工具都新建，输入过的值不留存。
+    // ITool::createPanel 的接口契约本就要求"每次返回全新面板"，插件无需改动。
     const ToolEntry *entry = m_registry->entryById(toolId);
     if (!entry || !entry->tool)
-        return nullptr;
+        return;
 
     QWidget *panel = entry->tool->createPanel(nullptr);
     if (!panel) {
@@ -302,12 +200,28 @@ QWidget *MainWindow::panelFor(const QString &toolId)
     }
 
     panel->setParent(m_stack);
-    const int index = m_stack->addWidget(panel);
-    m_pages.insert(toolId, index);
+    m_stack->addWidget(panel);
+    m_toolPanel = panel;
+}
 
-    // 面板被外部销毁时同步清掉索引，避免 m_pages 里留下失效指针
-    connect(panel, &QObject::destroyed, this, [this, toolId] { m_pages.remove(toolId); });
-    return panel;
+void MainWindow::destroyToolPanel()
+{
+    if (!m_toolPanel)
+        return;
+    m_stack->removeWidget(m_toolPanel);
+    m_toolPanel->deleteLater();
+    m_toolPanel = nullptr;
+}
+
+void MainWindow::showHome()
+{
+    destroyToolPanel();
+    m_currentToolId.clear();
+
+    // 页头整块隐藏：首页要拿到完整的内容区高度（uTools 观感的关键）
+    m_pageHeader->hide();
+    m_stack->setCurrentWidget(m_home);
+    m_home->focusSearch();
 }
 
 void MainWindow::showTool(const QString &toolId, bool countUsage)
@@ -316,42 +230,73 @@ void MainWindow::showTool(const QString &toolId, bool countUsage)
     if (!entry)
         return;
 
-    QWidget *panel = panelFor(toolId);
-    if (!panel)
+    // 离开当前工具视图即销毁面板；新工具一律全新面板
+    destroyToolPanel();
+    createToolPanel(toolId);
+    if (!m_toolPanel)
         return;
 
-    const int index = m_pages.value(toolId, -1);
-    if (index < 0)
-        return;
-
-    m_stack->setCurrentIndex(index);
+    m_stack->setCurrentWidget(m_toolPanel);
+    m_pageHeader->show();
+    m_popoutBtn->show();
     updateHeader(entry->info.name, entry->info.description);
+    m_currentToolId = toolId;
 
-    // 同步侧边栏选中态（但不触发 currentRowChanged，否则会绕回来再调一次 showTool）
-    for (int i = 0; i < m_sideList->count(); ++i) {
-        if (m_sideList->item(i)->data(Qt::UserRole).toString() == toolId) {
-            if (m_sideList->currentRow() != i) {
-                const QSignalBlocker blocker(m_sideList);
-                m_sideList->setCurrentRow(i);
-            }
-            break;
-        }
-    }
-
-    m_settings->setLastToolId(toolId);
     if (countUsage)
-        m_settings->bumpUsage(toolId);
+        markUsed(toolId);
 }
 
 void MainWindow::showSettings()
 {
-    m_stack->setCurrentWidget(m_settingsPage);
-    updateHeader(QStringLiteral("设置"), QStringLiteral("热键、开机自启、插件目录与关于"));
+    // 离开工具视图即销毁面板：设置页不是工具，回到工具时会重新创建空面板
+    destroyToolPanel();
+    m_currentToolId.clear();
 
-    // 设置页不属于任何工具，清掉侧边栏选中态避免"高亮着某个工具却在看设置"
-    const QSignalBlocker blocker(m_sideList);
-    m_sideList->setCurrentRow(-1);
-    m_sideList->clearSelection();
+    m_stack->setCurrentWidget(m_settingsPage);
+    m_pageHeader->show();
+    m_popoutBtn->hide();   // 设置页没有「独立窗口」语义
+    updateHeader(QStringLiteral("设置"), QStringLiteral("热键、开机自启、插件目录与关于"));
+}
+
+void MainWindow::popOutTool(const QString &toolId)
+{
+    if (toolId.isEmpty())
+        return;
+    const ToolEntry *entry = m_registry->entryById(toolId);
+    if (!entry)
+        return;
+
+    // QPointer 已销毁时隐式转成 nullptr，所以「窗口还开着」和「用户已关掉」共用一条判断
+    if (ToolWindow *existing = m_toolWindows.value(toolId)) {
+        existing->showAndRaise();
+        markUsed(toolId);
+        return;
+    }
+
+    auto *window = new ToolWindow(*entry, nullptr);
+    // WA_DeleteOnClose 会先析构窗口再发 destroyed，这里顺手把表项摘掉
+    connect(window, &QObject::destroyed, this, [this, toolId] { m_toolWindows.remove(toolId); });
+    m_toolWindows.insert(toolId, window);
+    window->showAndRaise();
+
+    markUsed(toolId);
+}
+
+void MainWindow::closeAllToolWindows()
+{
+    // 先拷贝一份再关：close() 会触发 destroyed -> 从哈希里移除，
+    // 直接迭代哈希会在中途被改而失效。
+    const auto windows = m_toolWindows.values();
+    for (const QPointer<ToolWindow> &window : windows) {
+        if (window)
+            window->close();
+    }
+    m_toolWindows.clear();
+}
+
+void MainWindow::saveWindowState()
+{
+    m_settings->setWindowGeometry(QStringLiteral("main"), saveGeometry());
 }
 
 void MainWindow::focusSearch()
@@ -362,31 +307,33 @@ void MainWindow::focusSearch()
     raise();
     activateWindow();
 
-    if (m_searchEdit) {
-        m_searchEdit->setFocus(Qt::ShortcutFocusReason);
-        m_searchEdit->selectAll();   // 全选：直接输入即替换旧关键词
-    }
+    // 呼出即回到首页（uTools 语义）：不再恢复上次的工具页。
+    // 想保留正在编辑的内容，用独立窗口打开。
+    showHome();
 }
 
-void MainWindow::selectLastTool()
+void MainWindow::markUsed(const QString &toolId)
 {
-    if (m_registry->count() == 0) {
-        m_stack->setCurrentWidget(m_emptyPage);
-        updateHeader(QStringLiteral("欢迎"), QStringLiteral("当前没有任何工具"));
-        return;
-    }
+    // 只有用户主动打开才记账：启动/唤出恢复不计，否则频次与最近使用会被启动次数污染
+    m_settings->bumpUsage(toolId);
+    m_settings->touchRecent(toolId);
+}
 
-    const QString last = m_settings->lastToolId();
-    if (!last.isEmpty() && m_registry->entryById(last)) {
-        showTool(last, false);   // 恢复现场不计频次
-        return;
-    }
-    showTool(m_registry->entries().first().info.id, false);
+void MainWindow::updateHeader(const QString &title, const QString &desc)
+{
+    m_toolTitle->setText(title);
+    m_toolDesc->setText(desc);
 }
 
 void MainWindow::prepareQuit()
 {
     m_forceClose = true;
+
+    // 退出是唯一可靠的清理点：qApp->quit() 不会给窗口发 closeEvent，
+    // 所以独立窗口必须在这里关，几何也在这里落盘。
+    saveWindowState();
+    closeAllToolWindows();
+    m_settings->sync();
 }
 
 void MainWindow::setHotkeyStatus(const QString &text, bool ok)
@@ -402,8 +349,33 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
     // 关闭 = 收进托盘。配合 setQuitOnLastWindowClosed(false)，进程继续驻留。
+    // 收起窗口也销毁内嵌工具面板（无缓存，输入值不留存）；独立窗口不跟着关。
+    destroyToolPanel();
+    m_currentToolId.clear();
+    saveWindowState();
     event->ignore();
     hide();
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    // Esc 分层（只认裸 Esc，带修饰键的组合留给子控件/系统）：
+    //   搜索框有字 → 由 HomePage 的 eventFilter 先清空并吞掉，走不到这里；
+    //   工具页 / 设置页 → 回首页（可逆的一步，比直接收托盘更符合直觉）；
+    //   首页 → 收进托盘，与标题栏 ✕ 等价。
+    //
+    // 走按键传播而不是 QShortcut：子控件先拿到按键，谁用谁吞掉，天然分优先级。
+    // 例如设置页热键捕获中的 Esc 语义是"取消捕获"，HotkeyButton::keyPressEvent
+    // 接受了该事件，根本不会传到这里，不会误回首页。
+    if (event->key() == Qt::Key_Escape && event->modifiers() == Qt::NoModifier) {
+        event->accept();
+        if (m_stack->currentWidget() != m_home)
+            showHome();
+        else
+            close();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
@@ -417,56 +389,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
-
-    // 搜索框的键盘行为：回车打开第一个可见结果，上下在可见项之间移动，Esc 清空
-    if (watched == m_searchEdit && event->type() == QEvent::KeyPress) {
-        auto *ke = static_cast<QKeyEvent *>(event);
-        switch (ke->key()) {
-        case Qt::Key_Return:
-        case Qt::Key_Enter: {
-            for (int i = 0; i < m_sideList->count(); ++i) {
-                if (!m_sideList->item(i)->isHidden()) {
-                    m_sideList->setCurrentRow(i);
-                    return true;
-                }
-            }
-            return true;   // 没有结果就吞掉，避免触发按钮默认动作
-        }
-        case Qt::Key_Down:
-            moveSideSelection(1);
-            return true;
-        case Qt::Key_Up:
-            moveSideSelection(-1);
-            return true;
-        case Qt::Key_Escape:
-            m_searchEdit->clear();
-            return true;
-        default:
-            break;
-        }
-    }
-
     return QMainWindow::eventFilter(watched, event);
-}
-
-void MainWindow::moveSideSelection(int delta)
-{
-    // 在可见项之间跳着移动：被过滤隐藏的项要跳过，否则按一下没反应
-    const int n = m_sideList->count();
-    if (n == 0)
-        return;
-
-    int target = m_sideList->currentRow() + delta;
-    while (target >= 0 && target < n) {
-        if (!m_sideList->item(target)->isHidden())
-            break;
-        target += delta;
-    }
-    if (target < 0 || target >= n)
-        return;
-
-    m_sideList->setCurrentRow(target);
-    m_sideList->scrollToItem(m_sideList->item(target));
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
@@ -474,7 +397,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QMainWindow::resizeEvent(event);
 
     // QSizeGrip 不会自己跟着右下角走（它按布局定位，而这里是绝对定位），
-    // 每次尺寸变化手动贴到右下角。
+    // 每次尺寸变化手动贴到右下角。恢复窗口几何后也依赖这里重新摆。
     if (auto *grip = findChild<QSizeGrip *>()) {
         grip->resize(16, 16);
         grip->move(width() - 18, height() - 18);

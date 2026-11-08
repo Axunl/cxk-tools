@@ -63,7 +63,7 @@ ToolRegistry::ToolRegistry(QObject *parent)
 
 void ToolRegistry::add(const ToolEntry &entry)
 {
-    // 防御：没有 id 就没法做稳定引用（面板缓存、配置里的 last_tool 都靠它）
+    // 防御：没有 id 就没法做稳定引用（配置里的最近使用、使用频次都靠它）
     if (entry.id().isEmpty() || !entry.tool) {
         qWarning() << "ToolRegistry: 忽略无效工具条目" << entry.info.name;
         return;

@@ -143,7 +143,7 @@ xtools::ToolInfo CalcPlugin::info() const
 
 QWidget *CalcPlugin::createPanel(QWidget *parent)
 {
-    // 每次都给新面板：宿主只在工具第一次被打开时调用，之后自己缓存
+    // 每次都给新面板：宿主不缓存面板，每次进入工具都会调用这里
     return new CalcPanel(parent);
 }
 

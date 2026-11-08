@@ -19,11 +19,16 @@ set(APP_SOURCES
     core/SingleInstance.h
     core/ToolRegistry.cpp
     core/ToolRegistry.h
+    core/WindowGeometry.h
 
+    ui/HomePage.cpp
+    ui/HomePage.h
     ui/MainWindow.cpp
     ui/MainWindow.h
     ui/SettingsPage.cpp
     ui/SettingsPage.h
+    ui/ToolWindow.cpp
+    ui/ToolWindow.h
     ui/TrayController.cpp
     ui/TrayController.h
 )

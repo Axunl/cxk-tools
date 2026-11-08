@@ -12,8 +12,9 @@ struct ToolInfo {
     QString     id;            // 唯一标识，小写英文，如 "jsonfmt"
     QString     name;          // 展示名，如 "JSON 格式化"
     QStringList keywords;      // 搜索关键词，如 {"json", "格式化"}
-    QString     description;   // 一句话说明，显示在页头
+    QString     description;   // 一句话说明，显示在页头与磁贴悬浮提示
     QString     iconPath;      // 可选，相对插件目录的图标；留空自动生成字母徽章
+                               // 建议 ≥96×96（首页磁贴按 48 逻辑像素 × DPR 取图）
 };
 
 class ITool {
@@ -65,7 +66,7 @@ QWidget *MyToolPlugin::createPanel(QWidget *parent)
 {
     auto *panel = new QWidget(parent);
     auto *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(28, 0, 28, 20);   // 与主窗口页头对齐
+    layout->setContentsMargins(28, 0, 28, 20);   // 与宿主 28px 留白对齐（独立窗口里上方由宿主补 12px）
     layout->addWidget(new QTextEdit(panel));
     return panel;
 }
@@ -86,13 +87,16 @@ add_subdirectory(plugins/mytool)
 ```
 
 重新构建（Windows `scripts\build.bat`，macOS / Linux `scripts/build.sh`），
-产物出现在 `build/bin/plugins/`（`.dll` / `.dylib` / `.so`），重启应用即可在侧边栏搜到它。
+产物出现在 `build/bin/plugins/`（`.dll` / `.dylib` / `.so`），重启应用即可在首页网格里看到它。
 
 ## 4. 注意事项
 
 - **不要给面板设 parent 归属**：`createPanel` 返回的 QWidget 由宿主接管，传进来的 `parent` 可能为空。
-- **面板可能被创建多次**：不要在构造函数里做「假定只执行一次」的全局副作用。
-  （宿主实际只在工具第一次打开时调用一次，但接口语义允许多次。）
+- **面板会被创建多次**：每次进入工具宿主都会调用 `createPanel`（不缓存面板，输入值不留存），
+  每次都必须返回全新面板，不要在构造函数里做「假定只执行一次」的全局副作用。
+- **不要假设只有一个面板实例**：宿主可能同时把同一个工具的面板放进主窗口和「独立窗口」，
+  也可能因为切换页面反复创建。所有 UI 状态（输入内容、历史列表）都放在面板实例里，
+  不要用静态/全局变量缓存 —— 否则两份面板会互相串状态。
 - **加 `#include "MyTool.moc"`**：如果 cpp 里还定义了带 `Q_OBJECT` 的类（比如面板类），
   文件末尾必须加这一行，否则链接期找不到元对象。
 - **接口版本**：宿主只加载 `apiVersion() == 1` 的插件。改了 `ITool.h` 的虚函数或 `ToolInfo` 字段
@@ -100,7 +104,8 @@ add_subdirectory(plugins/mytool)
   （这是刻意的，避免虚表错位直接崩溃）。
 - **样式**：主程序已有全局 QSS，`QPushButton` / `QLineEdit` / `QPlainTextEdit` 直接用就是统一风格；
   想要强调按钮可以 `btn->setProperty("accent", true)`。
-- **不要自己弹窗**：工具面板是嵌在主窗口里的，弹独立对话框会破坏"一个窗口装下所有工具"的体验。
+- **不要自己弹独立窗口**：宿主已经提供「独立窗口」（页头按钮 / 磁贴右键），插件再弹自己的顶层窗口
+  会出现两套窗口语义；普通对话框（文件选择等）不在此列。
 
 ## 5. 调试与验证
 

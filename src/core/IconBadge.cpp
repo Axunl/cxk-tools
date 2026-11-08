@@ -79,8 +79,11 @@ QIcon IconBadge::icon(const QString &seed, const QString &name)
     //
     // 只塞 2x 图会让 QIcon 把 96px 当成 48 逻辑尺寸，系统再按 24 显示时缩小，
     // 而缩小时它可能挑错源，表现为图标缺一角（踩过）。给全两档最稳。
+    //
+    // 96 是给首页磁贴留的：磁贴图标 48 逻辑像素，2x 屏需要 96 源图，
+    // 少了这一档 QIcon 只能把 64 放大，边缘会糊。
     QIcon ic;
-    const int sizes[] = {16, 24, 32, 48, 64};
+    const int sizes[] = {16, 24, 32, 48, 64, 96};
     for (int size : sizes) {
         ic.addPixmap(pixmap(seed, name, size, 1.0));
         ic.addPixmap(pixmap(seed, name, size, 2.0));

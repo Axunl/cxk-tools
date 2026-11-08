@@ -26,7 +26,7 @@ void AppController::start(bool autostartLaunch)
     m_plugins = new PluginManager(m_registry, this);
     m_hotkey = new HotkeyManager(this);
 
-    // 先加载插件再建窗口：MainWindow 构造时要按已注册的工具填侧边栏
+    // 先加载插件再建窗口：MainWindow 构造时要按已注册的工具铺首页网格
     m_plugins->loadAll();
 
     m_main = new MainWindow(m_registry, m_settings, m_plugins);
@@ -56,34 +56,67 @@ void AppController::start(bool autostartLaunch)
 
     registerHotkey(m_settings->hotkey());
 
-    // 恢复上次工具；此时不应累计使用频次，否则频率会被启动次数污染
-    m_main->selectLastTool();
-
     const QStringList args = QCoreApplication::arguments();
+
+    // 目标页参数：--tool <id> 进内嵌工具页，--popout <id> 直接开独立窗口。
+    // 只解析一次：下面截图分支与正常启动分支共用。
+    auto valueAfter = [&args](const QString &flag) -> QString {
+        const int index = args.indexOf(flag);
+        if (index >= 0 && index + 1 < args.size())
+            return args.at(index + 1);
+        return QString();
+    };
+    const QString toolTarget = valueAfter(QStringLiteral("--tool"));
+    const QString popoutTarget = valueAfter(QStringLiteral("--popout"));
 
     // ---- 调试用：把窗口渲染成 PNG 后退出
     // 无头环境（CI/沙箱）截不了屏，这个开关是界面回归的唯一手段。
+    // 注意顺序：showMainWindow() 会落到首页，切页动作必须排在它之后，
+    // 否则截出来永远是首页。
     const int shotIndex = args.indexOf(QStringLiteral("--shot"));
     if (shotIndex >= 0 && shotIndex + 1 < args.size()) {
         const QString path = args.at(shotIndex + 1);
 
+        showMainWindow();
         if (args.contains(QStringLiteral("--settings")))
             m_main->showSettings();
-        showMainWindow();
+        else if (!toolTarget.isEmpty())
+            m_main->showTool(toolTarget);
+        else if (!popoutTarget.isEmpty())
+            m_main->popOutTool(popoutTarget);
 
         // 等一轮布局+样式应用完成再抓图，否则可能抓到未布局的空窗口
-        QTimer::singleShot(500, this, [this, path] {
-            const bool ok = m_main->grab().save(path);
+        QTimer::singleShot(500, this, [this, path, popoutTarget] {
+            // --popout 要截独立窗口：它是最顶层窗口，不在 m_main 的子树里
+            QWidget *target = m_main;
+            if (!popoutTarget.isEmpty()) {
+                const auto tops = QApplication::topLevelWidgets();
+                for (QWidget *w : tops) {
+                    if (w->objectName() == QLatin1String("toolWindow")) {
+                        target = w;
+                        break;
+                    }
+                }
+            }
+            const bool ok = target->grab().save(path);
             qInfo() << "AppController: screenshot" << (ok ? "saved" : "failed") << path;
             qApp->quit();
         });
         return;
     }
 
-    // ---- 直接进设置页（命令行/快捷方式）
-    if (args.contains(QStringLiteral("--settings"))) {
+    // ---- 直接进设置页 / 直接进工具页（命令行、快捷方式）
+    if (args.contains(QStringLiteral("--settings")) || !toolTarget.isEmpty()) {
         showMainWindow();
-        m_main->showSettings();
+        if (!toolTarget.isEmpty())
+            m_main->showTool(toolTarget);
+        else
+            m_main->showSettings();
+        return;
+    }
+
+    if (!popoutTarget.isEmpty()) {
+        m_main->popOutTool(popoutTarget);
         return;
     }
 
@@ -93,7 +126,7 @@ void AppController::start(bool autostartLaunch)
         return;
     }
 
-    // ---- 正常启动：直接打开主窗口，停在上次使用的工具
+    // ---- 正常启动：直接打开主窗口，停在首页网格
     showMainWindow();
 
     if (m_registry->count() == 0) {
@@ -132,6 +165,8 @@ void AppController::registerHotkey(const QKeySequence &seq)
 
 void AppController::showMainWindow()
 {
+    // 统一落首页：主窗口每次被"打开"都回到网格选择器（热键/托盘/二次激活一致）
+    m_main->showHome();
     m_main->show();
     if (m_main->isMinimized())
         m_main->showNormal();

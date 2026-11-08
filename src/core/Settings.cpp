@@ -1,11 +1,14 @@
 #include "Settings.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
 #include <QTextStream>
+
+#include <algorithm>
 
 #ifdef Q_OS_WIN
 #include <QSettings>
@@ -20,13 +23,38 @@ namespace {
 constexpr auto kGroupGeneral = "settings";
 constexpr auto kKeyHotkey = "hotkey";
 constexpr auto kKeyAutostart = "start_with_system";
-constexpr auto kKeyLastTool = "last_tool";
 constexpr auto kGroupUsage = "usage";
+/// 最近使用：recent/<toolId> = UTC ISO8601 时间戳。
+/// 单独成组而不是塞进 usage：usage 是 int 计数，改存复合值会让老用户的频次作废。
+constexpr auto kGroupRecent = "recent";
+/// 窗口几何：ui/<name>/geometry = QWidget::saveGeometry() 的字节流。
+constexpr auto kGroupUi = "ui";
 
 #ifdef Q_OS_WIN
 constexpr auto kRunKeyPath = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr auto kRunValueName = "CXKTools";
 #endif
+
+/// 解析一条最近使用的时间戳。
+/// 主格式带毫秒（同一秒内连开两个工具时，秒级精度会让"最新"退化成按 id 排序），
+/// 再兜底解析秒级 ISODate，兼容手工编辑过的旧值。
+QDateTime parseRecentTimestamp(const QString &raw)
+{
+    QDateTime dt = QDateTime::fromString(raw, Qt::ISODateWithMs);
+    if (!dt.isValid())
+        dt = QDateTime::fromString(raw, Qt::ISODate);
+    return dt;
+}
+
+/// 几何键名：ui/<name>/geometry。
+/// name 里的 '/' 统一换成 '_'——插件 id 若带斜杠会把 QSettings 的组层级打断，
+/// 之后按原 name 读回来就变成另一个键了。
+QString geometryKey(const QString &name)
+{
+    QString safe = name;
+    safe.replace(QLatin1Char('/'), QLatin1Char('_'));
+    return QLatin1String(kGroupUi) + QLatin1Char('/') + safe + QStringLiteral("/geometry");
+}
 
 /// INI 路径。
 ///
@@ -112,16 +140,80 @@ void Settings::setStartWithSystem(bool on)
     applyAutostart(on);
 }
 
-QString Settings::lastToolId() const
+QStringList Settings::recentToolIds(int limit) const
 {
-    return m_settings.value(QLatin1String(kGroupGeneral) + QLatin1Char('/') + QLatin1String(kKeyLastTool))
-        .toString();
+    struct Item
+    {
+        qint64 ts;
+        QString id;
+    };
+
+    // 一次 allKeys() 扫描而不是递归 beginGroup：键很少（<= 工具数），
+    // 而且这样天然跳过其它组，不用管组名边界。
+    const QString prefix = QLatin1String(kGroupRecent) + QLatin1Char('/');
+    QList<Item> items;
+    const QStringList keys = m_settings.allKeys();
+    items.reserve(keys.size());
+
+    for (const QString &key : keys) {
+        if (!key.startsWith(prefix))
+            continue;
+        const QString id = key.mid(prefix.size());
+        if (id.isEmpty())
+            continue;
+
+        // 解析失败（用户手工编辑写坏）就跳过这一条，不能让整组消失
+        const QDateTime dt = parseRecentTimestamp(m_settings.value(key).toString());
+        if (!dt.isValid())
+            continue;
+        // 用毫秒而不是秒：同一秒内连开两个工具时，秒级精度会让"最新"退化成按 id 排序
+        items.append({dt.toMSecsSinceEpoch(), id});
+    }
+
+    // 按 epoch 倒序：不要直接字符串比较，跨时区写进来的老值会错位。
+    // 同一秒写入时用 id 兜底，保证顺序稳定可复现。
+    std::sort(items.begin(), items.end(), [](const Item &a, const Item &b) {
+        if (a.ts != b.ts)
+            return a.ts > b.ts;
+        return a.id < b.id;
+    });
+
+    QStringList out;
+    for (const Item &item : items) {
+        if (limit > 0 && out.size() >= limit)
+            break;
+        out.append(item.id);
+    }
+    return out;
 }
 
-void Settings::setLastToolId(const QString &id)
+void Settings::touchRecent(const QString &toolId)
 {
-    // 故意不 sync：切换工具很频繁，等进程退出或下次 sync 时一并落盘即可
-    m_settings.setValue(QLatin1String(kGroupGeneral) + QLatin1Char('/') + QLatin1String(kKeyLastTool), id);
+    const QString id = toolId.trimmed();
+    if (id.isEmpty())
+        return;
+
+    m_settings.setValue(QLatin1String(kGroupRecent) + QLatin1Char('/') + id,
+                        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+
+    // 裁剪到上限：只保留最新的 kRecentLimit 条，其余键直接删掉，
+    // 否则用户每试一个插件 ini 就多一行，永久增长。
+    const QStringList all = recentToolIds(0);
+    for (int i = kRecentLimit; i < all.size(); ++i) {
+        m_settings.remove(QLatin1String(kGroupRecent) + QLatin1Char('/') + all.at(i));
+    }
+    m_settings.sync();
+}
+
+QByteArray Settings::windowGeometry(const QString &name) const
+{
+    return m_settings.value(geometryKey(name)).toByteArray();
+}
+
+void Settings::setWindowGeometry(const QString &name, const QByteArray &geo)
+{
+    // 故意不 sync：几何只在关窗/进程退出时写，跟着退出前的那次 sync 一起落盘即可
+    m_settings.setValue(geometryKey(name), geo);
 }
 
 int Settings::usage(const QString &toolId) const

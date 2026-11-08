@@ -23,6 +23,6 @@ public:
     /// @param devicePixelRatio 屏幕 DPR，>1 时会生成更大的画布并按逻辑坐标绘制
     static QPixmap pixmap(const QString &seed, const QString &name, int size, qreal devicePixelRatio = 1.0);
 
-    /// 生成多尺寸 QIcon（16/24/32/48/64，各带 1x、2x 两档），供侧边栏/托盘/窗口使用。
+    /// 生成多尺寸 QIcon（16/24/32/48/64/96，各带 1x、2x 两档），供首页磁贴/托盘/窗口使用。
     static QIcon icon(const QString &seed, const QString &name);
 };

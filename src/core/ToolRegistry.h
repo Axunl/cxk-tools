@@ -53,7 +53,7 @@ public:
     const ToolEntry *entryById(const QString &id) const;
 
     /// 返回按相关度排序的工具 id。query 为空时按使用频次/名称排序。
-    /// @param limit 最多返回多少条（侧边栏过滤时传大值即可）
+    /// @param limit 最多返回多少条（首页搜索过滤时传大值即可）
     QStringList search(const QString &query, int limit = 9) const;
 
 signals:

@@ -140,9 +140,12 @@ cxk-tools/
 │   │   ├── HotkeyManager.*     全局热键（Win32 / X11；macOS 待补）
 │   │   ├── SingleInstance.*    QLocalServer 单实例与二次激活
 │   │   ├── IconBadge.*         字母徽章图标（插件没给图标时的兜底）
+│   │   ├── WindowGeometry.h    窗口几何的恢复/保存 + 屏幕外失效保护
 │   │   └── Log.*               日志落盘 + 消息处理器
 │   ├── ui/                     只向下依赖 core/api
-│   │   ├── MainWindow.*        自绘标题栏 + 侧边栏搜索 + QStackedWidget
+│   │   ├── MainWindow.*        自绘标题栏 + 页头 + QStackedWidget（首页/设置/工具）
+│   │   ├── HomePage.*          首页：搜索框 + 「最近使用 / 全部」磁贴网格
+│   │   ├── ToolWindow.*        单个工具的独立窗口（每工具最多一个）
 │   │   ├── SettingsPage.*      热键录制、开机自启、插件加载状态
 │   │   └── TrayController.*    托盘图标与右键菜单
 │   └── app/
@@ -172,13 +175,24 @@ cxk-tools/
 
 ## 交互约定（已定型，改之前先问）
 
-1. 启动**直接显示主窗口**，并停在上次使用的工具（`Settings::lastToolId()`）。
-2. 关闭按钮只是 `hide()` 收进托盘，进程不退出；真正退出必须先 `prepareQuit()`，否则会被 `closeEvent` 拦下。
-3. 全局热键与托盘「呼出搜索」都只做一件事：`MainWindow::focusSearch()`（显示 + 置前 + 聚焦搜索框并全选）。
-4. 搜索框在**主窗口侧边栏**里，没有独立浮层。**不要新增无边框透明弹窗 / 磁贴网格**，该设计已废弃。
-5. 工具面板由 `QStackedWidget` 缓存（`m_pages: id -> index`），切换工具不重建，
-   因此插件里的输入内容能保留到进程退出。**别改成每次重建面板。**
-6. 启动恢复上次工具时**不累计使用频次**（否则频次会被启动次数污染），只有用户主动点开才 `bumpUsage`。
+1. 启动、热键、托盘「呼出搜索」、单实例二次激活**统一落在首页网格**（`MainWindow::showHome()`），
+   不再恢复「上次使用的工具」（`settings/last_tool` 已随改版删除）。
+2. `Esc` 分三层，走 `MainWindow::keyPressEvent` 按键传播实现（只认裸 `Esc`）：
+   搜索框有关键词 → `HomePage` 的 eventFilter 先 `clear()` 并吞掉；工具页/设置页 → 回首页；
+   首页 → `close()` 收进托盘。子控件先拿到按键、谁用谁吞掉 —— 设置页热键捕获中的 `Esc`
+   由 `HotkeyButton::keyPressEvent` 接受，不会传到窗口层误回首页。
+   关闭按钮与首页 `Esc` 语义相同：只是 `hide()`，进程不退出；真正退出必须先 `prepareQuit()`，
+   否则会被 `closeEvent` 拦下。
+3. 全局热键与托盘「呼出搜索」都只做一件事：`MainWindow::focusSearch()`（显示 + 回首页 + 聚焦搜索框并全选）。
+4. 首页就是磁贴网格（`HomePage` + `ToolTile` + qss），不要另起 `QListView` + delegate 实现；
+   也不需要独立浮层。磁贴固定 104×100，列数由 `columnsFor()` 按视口宽度算。
+5. 工具面板**不缓存**：每次进入工具都 `createPanel()` 新建面板；离开视图（回首页、进设置、
+   收起窗口）即销毁面板（`destroyToolPanel()`），输入值随之清空。同一工具可以同时存在
+   「内嵌面板」与「独立窗口面板」两份，插件不得假设自己是唯一实例。
+6. 使用频次与「最近使用」只在用户主动打开工具时记账（`markUsed()`），启动/唤出不算。
+7. 独立窗口（`ToolWindow`）每个工具最多一个，重复打开只 `raise + activateWindow`；
+   主窗口收起时独立窗口继续存活；退出时由 `prepareQuit()` 统一关闭 —— **不能放在
+   `closeEvent` 里，`qApp->quit()` 不会给窗口发 closeEvent**。
 
 ---
 
@@ -245,11 +259,14 @@ macOS 用 `macdeployqt`，Linux 把可执行文件与 `plugins/` 放同一目录
 ## 界面验证（改 ui/ 或 qss 必做）
 
 ```sh
-build/bin/cxk-tools --shot build/shot-main.png              # 主窗口
-build/bin/cxk-tools --shot build/shot-settings.png --settings   # 设置页
+build/bin/cxk-tools --shot build/shot-home.png                    # 首页网格
+build/bin/cxk-tools --shot build/shot-tool.png --tool jsonfmt     # 工具页（页头 + 面板）
+build/bin/cxk-tools --shot build/shot-settings.png --settings     # 设置页
+build/bin/cxk-tools --shot build/shot-popout.png --popout calc    # 独立窗口
 ```
 
 `--shot` 会等 500ms 让布局与样式生效，把窗口 `grab()` 成 PNG 后自动退出，是**无头环境下唯一的界面回归手段**。
+**切页参数必须排在 `--shot` 的判断之后执行**：`showMainWindow()` 会落到首页，顺序颠倒会永远截到首页。
 用例注意：
 
 - 运行库：Windows 上构建已自动把 Qt DLL 部署到 `bin/`，直接运行即可；若之前把
@@ -340,17 +357,19 @@ xtools_add_plugin(mytool SOURCES MyTool.cpp MyTool.h)
 add_subdirectory(plugins/mytool)
 ```
 
-**4. 重新构建**，`build/bin/plugins/` 下出现 `<id>.dll/.dylib/.so` 即成功；重启应用即可搜到。
+**4. 重新构建**，`build/bin/plugins/` 下出现 `<id>.dll/.dylib/.so` 即成功；重启应用即可在首页网格里看到。
 若把带 `Q_OBJECT` 的面板类写在 `.cpp` 里，**`.cpp` 末尾要 `#include "MyTool.moc"`**（见 `CalcTool.cpp`）。
 
 ## 契约清单（违反会崩或内存泄漏）
 
-- `id` 是全应用唯一键：`last_tool`、面板缓存、使用频次都用它。重复 id 会被 `ToolRegistry` 丢弃并告警。
+- `id` 是全应用唯一键：最近使用、使用频次都用它。重复 id 会被 `ToolRegistry` 丢弃并告警。
   留空时宿主回退成文件名。
 - `keywords` 直接决定搜索命中率，把中英文与常见缩写都写进去（如 `{"json","格式化","format","jf"}`）。
 - `iconPath` 是**相对插件目录**的路径，文件不存在会退回字母徽章并在日志里告警。
-- `createPanel()` 可能被调用多次，每次都要返回**全新**的 `QWidget`；面板**不要设 parent**，
-  宿主会 `setParent` 塞进 `QStackedWidget`；插件不要自己 `delete`。
+- `createPanel()` **每次进入工具都会被调用**（宿主不缓存面板，输入值不留存），每次都要返回**全新**的 `QWidget`；面板**不要设 parent**，
+  宿主会 `setParent` 塞进 `QStackedWidget` 或独立窗口；插件不要自己 `delete`。
+- **插件不得假设自己的面板是唯一实例**：同一工具可以同时有「主窗口内嵌」与「独立窗口」两份
+  （用户点了页头「独立窗口」）。状态放面板实例里，别用静态/全局变量。
 - 异常情况返回 `nullptr` 即可（宿主会显示占位页），绝不能让宿主崩。
 - **改 `ITool.h` 的虚函数或 `ToolInfo` 字段必须把 `XTOOLS_API_VERSION` +1**，
   否则旧插件会以错误的虚表布局被加载，崩溃点在 `info()` 第一行，堆栈毫无意义。
@@ -389,8 +408,15 @@ add_subdirectory(plugins/mytool)
 | --- | --- | --- |
 | `settings/hotkey` | 全局热键 | 存 `PortableText`（`Ctrl+Alt+Space`），跨平台可读 |
 | `settings/start_with_system` | 开机自启 | 真正落系统项见下 |
-| `settings/last_tool` | 上次工具 id | 高频写，故意不每次 `sync()` |
+| `recent/<toolId>` | 最近使用时间戳 | UTC ISO8601（**带毫秒**，`ISODateWithMs`），最多 8 条，只在用户主动打开时写 |
 | `usage/<toolId>` | 使用频次 | 参与搜索加成 |
+| `ui/main_geometry` | 主窗口位置/大小 | `QWidget::saveGeometry()` 的字节流 |
+| `ui/tool/<toolId>/geometry` | 独立窗口位置/大小 | 同上；`name` 里的 `/` 归一化成 `_` |
+
+- 「最近使用」不能用秒级精度：同一秒内连开两个工具时，「最新」会退化成按 id 排序；
+  排序也必须用 `toMSecsSinceEpoch()`，`toSecsSinceEpoch()` 会把毫秒抹掉。
+- 几何恢复要校验窗口是否还在某块屏幕内（`WindowGeometry.h`），否则换显示器后会「窗口消失」。
+- 已废弃的 `settings/last_tool`（旧版恢复上次工具用）不再读取，老 ini 里残留的键无害。
 
 - 组名是 **`settings`，不是 `general`**：`[General]` 是 INI 保留段名，Qt 会转义成 `[%General]`，
   手工编辑时极其费解。
@@ -415,14 +441,26 @@ add_subdirectory(plugins/mytool)
 
 ## 窗口
 
-- 无边框 + 自绘标题栏；最小 `920×580`，默认 `1120×720`，标题栏高 `46`，侧边栏宽 `208`。
-- 右下角 `QSizeGrip`，在 `resizeEvent` 里重新定位。
-- 搜索框事件：`Enter` 打开第一个可见结果、`↑`/`↓` 移动侧边栏选中、`Esc` 清空过滤。
+- 主窗口：无边框 + 自绘标题栏；最小 `920×580`，默认 `1120×720`（首次启动；之后从
+  `ui/main_geometry` 恢复），标题栏高 `46`，左右内容留白 `28`。右下角 `QSizeGrip`，
+  在 `resizeEvent` 里重新定位（恢复几何后也靠这里重摆）。
+- 页面是三层栈：`HomePage`（首页网格，页头隐藏）/ `SettingsPage` / 动态工具面板。
+  页头在工具页与设置页显示，含「← 首页」、标题/描述、「独立窗口」（设置页隐藏）。
+- 首页网格：磁贴固定 `104×100`（图标 48），列数 = `(视口宽 - 2*28 - 12) / (104 + 8)`。
+  **恒定扣掉 12px 滚动条预留**，见踩坑表。键盘：`←→` 移一格、`↑↓` 移一行、`Enter` 开当前项。
+- 独立窗口 `ToolWindow`：原生边框（不加 `FramelessWindowHint`、不用 `Qt::Tool`），
+  `WA_DeleteOnClose`，面板随窗口销毁；去重表 `QHash<QString, QPointer<ToolWindow>>` 在 `MainWindow`。
+- `Esc` 分层见「交互约定」第 2 条；热键捕获中的 `Esc` 由 `HotkeyButton` 吞掉只取消捕获。
 
 ## 样式（`src/app/resources/style.qss`）
 
-- 全部按 **objectName 选择器**生效：`#mainRoot` `#titleBar` `#sidebar` `#sideSearch` `#sideList`
-  `#pageHeader` `#toolTitle` `#toolDesc` `#toolStack` `#sideFooter`；按钮用 `[accent="true"]` 属性选择器。
+- 全部按 **objectName 选择器**生效：`#mainRoot` `#titleBar` `#titleText` `#titleHotkey`
+  `#titleBtn` `#titleBtnSettings` `#titleBtnClose` `#homeRoot` `#homeTop` `#homeSearch`
+  `#homeSearchClear` `#homeScroll` `#homeContent` `#sectionTitle` `#toolTile` `#tileName`
+  `#homeFooter` `#homeHint` `#homeEmptyTitle` `#homeEmptyDesc` `#pageHeader` `#pageBack`
+  `#pagePopout` `#toolTitle` `#toolDesc` `#toolStack` `#toolWindowRoot`；按钮用 `[accent="true"]`。
+- 磁贴的 hover / 键盘选中走**动态属性**（`#toolTile[hovered="true"]`、`#toolTile[current="true"]`），
+  不用 `:hover` —— QWidget 子类的 `:hover` 依赖样式引擎主动打 `WA_Hover`，跨版本不保证触发。
 - 全局 `QPushButton` 带 `padding: 6px 14px`，**30px 宽的小按钮必须显式 `padding: 0`**，
   否则文字被挤没、只剩一个小点（标题栏的最小化/关闭曾因此显示成两个点）。
 - qss 通过 `.qrc` 编进二进制（`CMAKE_AUTORCC ON`），路径固定 `:/style.qss`；改完不用改代码，重编即可。
@@ -460,6 +498,13 @@ add_subdirectory(plugins/mytool)
 | IDE 里点运行后界面「已加载 0 个工具」、日志「发现 0 个候选文件」 | 运行配置只构建 `cxk-tools` 目标，插件是独立 MODULE 目标、不在依赖链上 → `bin/plugins` 为空 | 根 `CMakeLists.txt` 收尾处已 `add_dependencies(cxk-tools 全部插件)`（清单由 `xtools_add_plugin` 写全局属性 `XTOOLS_PLUGIN_TARGETS`），点运行即连带构建；仍出现则检查 `bin/plugins` 是否被清过，并**重启应用**（插件只在启动时扫描一次） |
 | `.bat` 改了中文注释后脚本整体崩 | cmd 按本地代码页（GBK）逐字节解析 | `.bat`/`.cmd` 只能纯 ASCII（规则 5） |
 | IDE 运行控制台里日志中文变 `???` 乱码（文件日志却是好的） | `qPrintable()` 实际是 `toLocal8Bit()`，中文 Windows 下向 stderr 写 GBK 字节，而 IDE 控制台按 UTF-8 解码 | 日志写 stderr 一律 `toUtf8()`（见 `Log.cpp` handler）；Windows 下有控制台时 `SetConsoleOutputCP(CP_UTF8)` 兜底 |
+| `QLineEdit` 自带清空按钮压在搜索框视觉圆角边框上 | 其内置 clear button 按控件右缘定位，qss 的 `margin`/`padding` 都挪不动它 | 自建 `QToolButton#homeSearchClear` 浮在框内，在 `eventFilter` 的 `Resize` 里显式摆位；别再试 qss 属性 |
+| `QWidget` 子类设了 qss `background` 却不显示 | QWidget 子类默认不画样式背景 | `setAttribute(Qt::WA_StyledBackground, true)`（见 `ToolTile`） |
+| 首页磁贴只排一列、之后不再重排 | 列数按滚动区视口宽度算，首帧视口还没拿到真实宽度；只监听 `HomePage::resizeEvent` 会漏掉视口自己的尺寸变化 | 视口也装 `eventFilter`，`Resize` 时 `reflow()`；列数没变时直接 return |
+| 网格列数在滚动条出现/消失时反复抖动 | 按真实 viewport 宽度算列数，滚动条占掉 10px → 少一列 → 变矮 → 滚动条消失 → 多一列 … | 列数公式恒定扣 `kScrollbarReserve`(12px) |
+| 退出程序后独立窗口还留着、几何没存 | `qApp->quit()` 不会给窗口发 `closeEvent` | 清理放 `MainWindow::prepareQuit()`（存几何 + `closeAllToolWindows()`） |
+| 同一秒内开的两个工具，「最近使用」顺序不对 | 时间戳只有秒级精度，退化成按 id 排序；且 `toSecsSinceEpoch()` 会把毫秒抹掉 | 写 `ISODateWithMs`，排序用 `toMSecsSinceEpoch()` |
+| `--shot` 截出来的永远是首页 | `showMainWindow()` 会 `showHome()`，切页动作排在它前面就被覆盖 | 先 `showMainWindow()`，再 `--tool` / `--settings` / `--popout` |
 
 ---
 

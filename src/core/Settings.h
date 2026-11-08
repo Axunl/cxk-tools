@@ -10,16 +10,21 @@
 // 方便用户手工编辑/排查），Windows 大约在 %LOCALAPPDATA%\cxk\cxk-tools\。
 // ---------------------------------------------------------------------------
 
+#include <QByteArray>
 #include <QKeySequence>
 #include <QObject>
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 
 class Settings : public QObject
 {
     Q_OBJECT
 
 public:
+    /// 「最近使用」的保留上限，首页分组与写入裁剪共用这一个值。
+    static constexpr int kRecentLimit = 8;
+
     static Settings &instance();
 
     QKeySequence hotkey() const;
@@ -28,9 +33,18 @@ public:
     bool startWithSystem() const;
     void setStartWithSystem(bool on);
 
-    /// 上次使用的工具 id，启动时用来恢复现场（不会因此累计使用频次）。
-    QString lastToolId() const;
-    void setLastToolId(const QString &id);
+    /// 最近使用过的工具 id，按时间倒序（最新的在前）。
+    /// limit <= 0 表示不裁剪——写入时的裁剪逻辑要拿全量才能知道该删谁。
+    QStringList recentToolIds(int limit = kRecentLimit) const;
+
+    /// 记一次「用户主动打开了这个工具」。空白 id 直接忽略。
+    /// 与 usage 分开存：usage 是 int 计数，塞进时间戳会让老用户的频次数据作废。
+    void touchRecent(const QString &toolId);
+
+    /// 窗口几何（QWidget::saveGeometry 的字节流），键为 ui/<name>/geometry。
+    /// name 里的 '/' 会被换成 '_'，避免带斜杠的插件 id 把 QSettings 的组层级打断。
+    QByteArray windowGeometry(const QString &name) const;
+    void setWindowGeometry(const QString &name, const QByteArray &geo);
 
     /// 使用频次，参与搜索排序加成（见 ToolRegistry）。
     int usage(const QString &toolId) const;
