@@ -665,6 +665,9 @@ add_subdirectory(plugins/mytool)
 - Windows：`RegisterHotKey` 注册到 message-only 窗口（`HWND_MESSAGE`），`WndProc` 收 `WM_HOTKEY`。
 - Linux：X11 `XGrabKey` 抓根窗口，要连带 `CapsLock`/`NumLock` 的 4 种 lock mask；
   占用检测靠 `XSetErrorHandler` + `XSync` 捕 `BadAccess`；Wayland 拿不到 `Display*`，直接返回可读失败文案。
+  `Display*` 从 `qGuiApp->nativeInterface<QNativeInterface::QX11Application>()` 取
+  （需含 `<QtGui/qguiapplication_platform.h>`）。**这是成员函数**，写成 `QGuiApplication::nativeInterface<T>()`
+  在 GCC 上直接编译失败（MSVC/clang 不报），见第六部分踩坑表。
 - macOS：未实现，`registerSequence()` 返回明确原因，**不允许静默失败**。
 - 失败不阻止启动：原因回显到设置页 + 托盘气泡，用户在设置里换一个组合键即可。
 
@@ -1079,6 +1082,8 @@ add_subdirectory(plugins/mytool)
 | 打包报 `'C:\Program' is not recognized` | `%ProgramFiles(x86)%` 写在 `if (...)` 块内，`(x86)` 的 `)` 提前闭合块，剩余文本被当成命令执行 | 把这段逻辑挪出块（标签子程序 + `goto`），块内不要出现带括号的路径变量 |
 | 装好的 ISCC 找不到，或报 `"" 不是内部或外部命令` | 同一个块里先 `set` 再 `%VAR%`：整块在解析期就展开完了，读到的是空值 | 同上；确实要在块内取值就 `setlocal enabledelayedexpansion` 后用 `!VAR!` |
 | CI 上安装器步骤莫名失败、日志只有一行 err | 没有把「必须有安装器」变成硬约束 | CI 里设 `XTOOLS_REQUIRE_INSTALLER=1`，`package.bat` 缺 ISCC 即 `PACKAGE_FAILED` |
+| Linux 编译报 `cannot call member function 'QGuiApplication::nativeInterface()' without object` | `nativeInterface<T>()` 是**成员**函数（模板成员），写成 `QGuiApplication::nativeInterface<T>()` 看着像静态调用；MSVC 与 clang 对这类写法更宽松，只有 GCC 会在 CI 上把它拦下来 | 用 `qGuiApp->nativeInterface<T>()`（或 `qobject_cast<QGuiApplication *>(qApp)`）。别用 `QGuiApplication::instance()`：静态类型是 `QCoreApplication*`，拿不到这个模板成员 |
+| 只改了 Linux 分支，本机（Windows）却「编过」了 | 平台分支在另外两个平台上根本不参与编译，本机通过不代表 CI 通过 | 改 `#if defined(Q_OS_LINUX)` 里的代码，交付说明必须写「本机无法验证，等 CI 首次运行」；沙箱禁 WSL/Docker 时没有本地替代方案 |
 
 ---
 

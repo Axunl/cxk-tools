@@ -98,7 +98,17 @@ constexpr unsigned int kLockMasks[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mas
 /// 取 X11 Display。Wayland 会话下拿不到（返回 nullptr），调用方要给出明确提示。
 Display *x11Display()
 {
-    auto *x11 = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
+    // nativeInterface<T>() 是 QGuiApplication 的**成员**函数（不是静态函数），
+    // 写成 QGuiApplication::nativeInterface<...>() 看起来像静态调用，GCC 直接报
+    // "cannot call member function without object"。用 qGuiApp 宏（等价于把
+    // QCoreApplication::instance() 转成 QGuiApplication*）。
+    //
+    // 也别换成 QGuiApplication::instance()：它的静态类型是 QCoreApplication*，
+    // 模板成员在基类上不存在，照样编译不过。
+    auto *app = qGuiApp;
+    if (!app)
+        return nullptr;   // 理论上建窗口后才会调到这里，纯防御
+    auto *x11 = app->nativeInterface<QNativeInterface::QX11Application>();
     return x11 ? x11->display() : nullptr;
 }
 
