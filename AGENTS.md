@@ -154,7 +154,19 @@ cxk-tools/
 │       └── resources/          style.qss + resources.qrc
 ├── plugins/
 │   ├── jsonfmt/{JsonFmtTool.*, JsonFmtPanel.*, JsonEditor.*, JsonHighlighter.*, JsonText.h}
-│   └── calc/{CalcTool.*, ExprEval.h}
+│   ├── calc/{CalcTool.*, ExprEval.h}
+│   ├── ipquery/{IpQueryTool.*, IpQueryLogic.h}
+│   ├── memmon/{MemMonTool.*, MemMonPanel.*, MemProbe.*, MemText.h}
+│   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
+│   ├── translate/{TranslateTool.*, TranslatePanel.*, TranslateLogic.h}
+│   ├── colorpicker/{ColorPickerTool.*, ColorPickerPanel.*, ColorText.h, ColorProbe.h}
+│   ├── ocr/{OcrTool.*, OcrPanel.*, OcrEngine.*, OcrCapture.*, OcrText.h}
+│   ├── cron/{CronTool.*, CronPanel.*, CronExpr.h}
+│   ├── jwt/{JwtTool.*, JwtLogic.h}
+│   ├── regex/{RegexTool.*, RegexPanel.*, RegexMatch.h}
+│   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
+│   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
+│   └── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
 ├── scripts/{build.bat, build.sh, package.bat}
 └── docs/{PLUGIN.md, main-preview.png}
 ```
@@ -526,6 +538,268 @@ add_subdirectory(plugins/mytool)
 - 粘贴后光标的三级映射见 `mapCursorPosition()`：文末 → 文末；非空白字符锚点（需校验）；
   都对不上（`QJsonDocument` 输出会按键名排序）才退回"保行号 + 列号夹住"。
 
+## 内存监控（`plugins/memmon`，插件内部）
+
+- 分三层：`MemProbe`（唯一碰平台 API 的地方，只暴露 Qt 值类型）、
+  `MemText.h`（纯逻辑：单位换算、占用率、筛选排序、回收候选，全部 inline）、`MemMonPanel`（界面）。
+  纯逻辑抽成 header 是为了能在临时工程里直接断言，不必真的去刷别人的工作集。
+- **采样只在面板可见时进行**：`showEvent` 起定时器、`hideEvent` 停。内嵌面板被页栈藏起来后
+  还每 2 秒枚举几百个进程（每个都要 OpenProcess）是纯浪费。
+- **回收能力只有 Windows 有**（`EmptyWorkingSet`）。Linux 内核与 macOS 都没有普通用户可用的
+  「刷出指定进程工作集」接口，两个平台返回明确失败文案（`unsupportedTrimReason()`），
+  把「自动释放」勾选框自动弹回并在状态栏说明原因 —— 不允许留一个"看着开着其实什么都不做"的开关。
+- `EmptyWorkingSet` 需要 `PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA`，**不能用** `QUERY_LIMITED`：
+  后者只够读统计，刷工作集会被拒绝。列表采样则相反，用 `QUERY_LIMITED` 能多打开一批受保护进程。
+- 回收语义是"把工作集写进页面文件 / 待机列表"，进程不退出、数据不丢，但**短期会变慢**。
+  因此：手动批量只挑 64 MB 以上、最多 40 个；自动释放只挑 128 MB 以上、最多 6 个，且有 30 秒冷却
+  （`kAutoCooldownSecs`）—— 连续刷同一批进程只会让系统更没效率。
+- 列表刷新做了两档：pid 序列不变就**只改文字**（`updateRow`），变了才整表重建（`rebuildTableFully`），
+  重建时按 pid 恢复选中行、夹住滚动位置。每次刷新都 `clear()` 重建会每 2 秒闪一下、选中的行也丢。
+- 表格行高由 `RowHeightDelegate::sizeHint` 给最小值（30px）。qss 的 `::item padding` 只管左右，
+  竖向高度来自 delegate，写 qss 调不动。
+- 阈值下拉框的箭头是 `ComboArrow`（`QComboBox` 的自绘子控件、`WA_TransparentForMouseEvents`），
+  由 `MemMonPanel::eventFilter` 在 Resize / EnabledChange 时重摆与改色。qss 无法可靠画这个箭头，
+  原因见下面踩坑表；别再往回去改 `::down-arrow`。
+- 自动释放的开关与累计释放量都是**面板实例状态**，没有落盘：宿主不缓存面板，离开工具即重置，
+  与「面板不缓存」的既有约定一致（也避免两份面板互相串状态）。
+
+## 翻译（`plugins/translate`，插件内部）
+
+- 分三层：`TranslateLogic.h`（纯逻辑：语言表、源语言检测、请求构造、四家响应解析、分段/拼接）、
+  `TranslatePanel`（界面 + 异步调度）、`TranslateTool`（插件入口）。纯逻辑做成 header 是为了
+  临时断言程序能直接 include；面板也放头文件，临时工程开 AUTOMOC 就能做端到端断言。
+- 四家数据源按枚举顺序即降级顺序：有道演示接口（默认）→ 搜狗网页接口 → MyMemory →
+  Google gtx（海外兜底）。JSON 形态完全不同，统一在 `parseResponse()` 里归一化成
+  `ParseResult`，面板不感知差异；`RequestSpec.error` 让纯逻辑能在**不发请求**的前提下判
+  「这家不支持当前方向」，面板直接走降级。
+- **搜狗要先握手**：`GET https://fanyi.sogou.com/` 下发 cookie，SSR 的
+  `window.__INITIAL_STATE__` 里有 `secretCode` / `uuid`；没有 cookie 时接口固定返回
+  `translate.errorCode = "s10"`。表单签名是 `md5(from + to + text + secretCode)`，
+  握手与翻译请求必须用同一个浏览器 UA。会话参数只缓存在面板实例里（`m_sogouSecret`），
+  s10 时清掉、下次重新握手；不落盘、不做全局缓存，避免内嵌/独立窗口两份面板串会话。
+- **搜狗的坑方向**：繁体中文不是它的目标语言（原样返回原文）、`en→ko` 稳定返回
+  `status=-1`、源=目标时它会擅自反转方向（`en→en` 返回中文）。三类都由
+  `sogouDirectionError()` 在发请求前拦掉并降级；自动模式用本地检测码参与同语言判断。
+  0.1 秒连发也会偶发 `status=-1`，所以握手也计入同一个节流窗口。
+- **腾讯不接数据源**：官方 API 已于 2025-09-15 关闭，`api.fanyi.qq.com/api/v1/*` 要
+  TCaptcha 换 Token、`transmart.qq.com/api/imt` 要登录态，桌面端无法匿名调用。曾做过
+  「腾讯网页 ↗」跳转按钮（剪贴板带文本 + `QDesktopServices::openUrl()`），应用户要求已移除：
+  面板只保留四家真正可用的服务，搜索关键词里的「腾讯」也一并去掉，别留找不到入口的死文案。
+- **引擎入口必须看得见**：全局 qss 写了 `QComboBox::drop-down` 后 Qt 不再画默认三角，
+  源/目标语言与引擎三个下拉都要用自绘 `ComboArrow`（objectName `transComboArrow`，
+  `WA_TransparentForMouseEvents`）+ `TranslatePanel::eventFilter` 跟着 Resize 摆位；漏补时
+  「自动（4 家）」看着只是一行静态文字，用户会以为整个工具只有一个引擎。除了箭头，还加了
+  `transEngineLabel`（「引擎」标签）与 `transEngineHint`（常驻服务链，直接列出四家名字，
+  每项在下拉里另带 ToolTipRole 说明），后者设 `QSizePolicy::Ignored`，窄窗口裁字也不撑大
+  窗口最小宽度。状态栏只报本次真实来源，不能拿它当「有哪些服务」的说明书。
+- **限流是常态**：有道连发几条就返回 411，部分 `Auto→小语种` 方向返回 102，文本超过约
+  1000 字符返回 103；MyMemory 单次 q 上限 500 字符（403，且把错误文案塞进 `translatedText`）。
+  所以统一按 400 字分段、串行请求、任意两次请求间隔 ≥1000ms；任一引擎失败就**整篇**换下一家
+  重译（保证译文来源一致），全部失败时把每家原因逐条列在状态栏，不允许静默失败。
+- **源语言靠本地检测**：MyMemory 的 `langpair=autodetect|xx` 会把原文原样返回（实测
+  "Hello world" 仍是 "Hello world"），有道 `Auto→ja` 直接报 102。`detectSource()` 按 Unicode
+  区段判断（假名/谚文优先于汉字，汉字压过拉丁）。有道/搜狗在自动模式用各自的 `Auto`/`auto`
+  （服务端检测对拉丁语系更准），MyMemory/Google 则传本地推断出的明确码。
+- `QUrlQuery` 构造 MyMemory 的 `langpair` 里带 `|`，必须走 FullyEncoded（`%7C`）；有道与搜狗
+  的 POST 表单也要 `query.toString(QUrl::FullyEncoded).toUtf8()`，别手工拼字符串
+  （签名用的四个参数必须与表单逐字一致）。
+- 所有 `errorCode` / `responseStatus` / `status` 都可能是字符串或数字（有道 `"0"` 是字符串、
+  411 是数字，搜狗 `status` 是数字），统一走 `scalarText()`；只按 `isString()` 读会把数字
+  形态全判成失败。
+- 异步回复一律带 `generation`：面板不缓存且可同时存在内嵌/独立窗口两份，重新翻译、清空或
+  析构时用 `cancelInFlight()` 让旧回复失效；`connect` 的上下文必须是 `this`。
+- 「输入后自动翻译」默认开启且防抖 1100ms：公开接口有频率限制，必须保留防抖与请求间隔，
+  避免边打字边请求撞 411；复选框在信号连接前置为选中，空面板不会因此发请求。
+  状态三态走 `setProperty("state")` + `unpolish/polish`，颜色只在全局 qss 里定义。
+- 只做纯文本翻译，不做词典释义/发音/文档翻译；待翻译文本会发给第三方服务，README 已提示
+  不要用于敏感内容。接口是公共服务，随时可能变更；搜狗页面还带 `transOfflineTime:
+  2026-11-27` 下线标记，届时该引擎可能失效，别把可用性当成不变前提。
+
+## 取色器（`plugins/colorpicker`，插件内部）
+
+- 分三层：`ColorText.h`（纯逻辑：颜色文本解析、7 种格式输出、WCAG 对比度与建议文字色）、
+  `ColorProbe.h`（屏幕取样 + 平台能力说明，只用 Qt API）、`ColorPickerPanel.*`（界面）。
+  纯逻辑抽成 header 是为了能在临时工程里直接断言，不必拉起整个界面。
+- **屏幕取色不 `grabMouse()`**：`grabMouse()` 会吃掉其他应用的鼠标事件。改成取色态下用
+  `QTimer`（40ms）轮询 `QCursor::pos()` + `leftButtonDownNow()`，全程不干扰别的应用。
+  吸管浮窗对鼠标事件透明（`WA_TransparentForMouseEvents`），点击穿透、不挡取样点。
+- **左键状态必须实时查询，不能用 `QGuiApplication::mouseButtons()`**：它不是实时查询，
+  只反映 Qt 应用**最近一次收到的鼠标事件**里的按键状态。吸管模式下宿主窗口隐藏、浮窗对
+  鼠标透明，光标在其他应用上时本应用收不到鼠标事件，mouseButtons() 永远停在「未按下」——
+  表现就是「预览跟着光标走、按下左键死活不锁定」（2026-11-08 实修）。Windows 用
+  `GetAsyncKeyState(VK_LBUTTON) & 0x8000` 查物理按键实时状态（全局、无需焦点），
+  其他平台退回 mouseButtons() 兜底（macOS/Linux 下该问题同样存在，属已知边界）。
+- **打开工具即进入「吸管模式」**：`showEvent` 首次显示时用 `QTimer::singleShot(0)` 延一轮调
+  `showEyedropper()`（隐藏本面板所属顶层窗口、显示跟随鼠标的 `EyedropperWindow` 浮窗）+
+  `startPicking()`，等宿主布局/绘制完成再抓屏。浮窗是**独立顶层窗口**（`Qt::FramelessWindowHint |
+  Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus` + `WA_ShowWithoutActivating` +
+  `WA_TransparentForMouseEvents`），脱离宿主窗口、跟随光标移动，实时显示放大镜 + HEX 色值。
+  宿主窗口隐藏后光标不再落在「本应用窗口内」，全屏任意位置都能取色。`m_autoPicked` 挡门保证只
+  自动触发一次；`m_eyedropperMode` 让 `hideEvent` 知道「窗口是面板自己藏的、别停采样」。
+  状态机两段：`ignoreUntilRelease`（忽略首次按下的那一下）→ 实时预览 → **按下左键即锁定**。
+  **锁定即自动复制 HEX**：`onPickTick` 的 `leftDown` 分支调 `lockAndCopy()`（`recordColor` +
+  写 HEX 到剪贴板并回读校验），随后浮窗显示「已复制 #XXXXXX」停留约 1.2 秒（`EyedropperWindow::
+  showResult`）再 `hideEyedropper()` 关浮窗、整体收起宿主窗口，取色动作就此结束、不再弹回面板。
+  裸 `Esc` 也取消取色并走 `hideEyedropper()`。
+- **取色期间系统鼠标光标变十字准星（+）**：`CrosshairCursor` 类封装——Windows 用原生
+  `SetSystemCursor(CopyImage(LoadCursor(IDC_CROSS)), OCR_NORMAL)` 替换系统级 OCR_NORMAL 光标
+  （跨应用生效，Qt 的 `setOverrideCursor` 只对本应用窗口有效，鼠标移到别的应用就变回箭头）。
+  备份原箭头句柄、结束后 `SetSystemCursor(s_backup, OCR_NORMAL)` 恢复；`grab()`/`release()` 幂等。
+  两个坑：① `OCR_NORMAL` 等常量在 WinUser.h 里被 `#ifdef OEMRESOURCE` 保护，而 OEMRESOURCE 在
+  `WIN32_LEAN_AND_MEAN` 下不自动定义，需在 include windows.h 前显式 `#define OEMRESOURCE`；
+  ② `SetSystemCursor` 会 destroy 传入句柄，`LoadCursor` 返回的共享句柄不能直接传，必须
+  `CopyImage(..., IMAGE_CURSOR, 0, 0, 0)`（flags=0 复制副本、不删原图）先复制一份。
+  macOS/Linux 无等价的「全局替换系统光标」Qt 公开接口，退而用 `setOverrideCursor(Qt::CrossCursor)`
+  （仅本应用窗口内生效），不假装成功。
+- **光标在本应用窗口内不采样**：`cursorOverOwnWindow()` 遍历 `QApplication::topLevelWidgets()`
+  的可见 `frameGeometry()`。否则刚点开时光标还在磁贴/面板上，会把窗口背景当成取到的颜色，
+  用户点输入框/复制按钮的那次按下+松开还会被误判成锁定。吸管模式下宿主窗口已隐藏、浮窗对鼠标
+  透明，不会命中此分支；它兜底覆盖「手动点按钮取色」的普通路径。窗口内只更新坐标标签、整个 tick
+  跳过；`startPicking()` 的状态文字一次写全，tick 不再覆盖状态，红色取样失败文案才留得住。
+  实时预览时只在输入框**无焦点**才同步 HEX。
+- **抓屏瞬时失败不立刻退出取色**：切屏、锁屏、远程桌面重连时 `grabWindow()` 可能只抖一下，
+  连续 3 次（约 120ms）失败才 `setStatus(error)` + `stopPicking()`；否则取色会因为一次
+  抖动就停下、逼用户再点一次按钮。成功一次即清零，最终失败仍给明确原因（规则 3）。
+- 取样走 `QScreen::grabWindow(0, ...)`，坐标是「`QCursor::pos()` 减去该屏 `geometry().topLeft()`」，
+  请求区裁剪到屏幕内（光标贴边时）。**不要假设返回图与请求区 1:1**：Qt 在高 DPI 下会返回放大的
+  设备像素图（本机 13×13 的请求拿到 16×16），中心像素必须用 `image.size()/area.size()` 的实际比例
+  反推；放大镜直接显示这张原图，天然保持正确密度。
+- 三平台差异只体现在 `ColorProbe::platformHint()` 的文案：macOS 需屏幕录制授权（未授权系统返回
+  全黑且 Qt 不报错）、Linux Wayland 拿不到像素、Windows 远程桌面可能黑屏。抓图失败一律给可读原因，
+  **不静默返回黑色**；手动输入 / 剪贴板读入是权限受限时的兜底路径。
+- `parseColor()` 结果统一经 `detail::normalized()` 转成整数 RGBA 规格：`fromRgbF(..., 0.5)` 与
+  `QColor(r,g,b,128)` 的 alpha 内部定点值不同，`operator==` 会判不等，历史色块去重会因此失效。
+- 复制走 `copyText()`（手动「复制」按钮与「复制全部格式」）并**回读剪贴板校验**：`QClipboard::setText()`
+  没有返回值，Windows 上剪贴板被别的进程占用时 Qt 只打一条 COM 警告；不回读就会把失败当成功报给用户。
+- **`onTick` 必须有重入锁（踩坑，曾致堆损坏崩溃）**：`QScreen::grabWindow()` / `QClipboard::setText/text()`
+  在 Windows 上会内部转消息泵，使 40ms 定时器在本 tick 未返回时又触发一次 `onPickTick`；嵌套 tick
+  会并发改写 `m_color` / `m_image` / `m_fieldEdits` 这些隐式共享对象的引用计数 → 堆损坏
+  （`0xC0000374`，实测「点开取色器卡住→进程崩溃」）。入口 `if (m_inTick) return;` + RAII `TickGuard`
+  出口复位。另外把锁定后的剪贴板复制用 `QTimer::singleShot(0, this, ...)` **挪出 tick**：剪贴板读写会
+  转消息泵，同步做要么被重入锁挡住、要么面板销毁时 `this` 悬空（绑 `this` 为 context 则自动取消）。
+  改这段时务必复测：长时间连续取样（约 150 次抓屏）不崩、锁定后 clipboard==hex。
+- CMYK 是 Qt 的 `cyanF()` 等屏幕色近似换算，不是印刷分色；「最近颜色」是面板实例状态，不落盘。
+
+## OCR 文字识别（`plugins/ocr`，插件内部）
+
+- 四层：`OcrText.h`（纯逻辑，可临时断言）、`OcrEngine.*`（唯一碰平台差异的地方）、
+  `OcrCapture.*`（纯 Qt 全屏框选浮层）、`OcrPanel.*`（界面）。分层理由同 memmon/colorpicker：
+  纯逻辑抽成 header 才能在临时工程里直接 include 验证。
+- **两端输出统一成「带坐标的词」**：Windows 后端输出 `W|x|y|w|h|text`，tesseract 输出 TSV
+  （取 `level==5` 的 word 行），都由 `OcrText.h` 归一化成 `Word{x,y,width,height,text}`，
+  排版（归行、拼接、分列）只有一份实现。
+- Windows 用系统自带 PowerShell 调 `Windows.Media.Ocr`（WinRT），**不写 C++/WinRT**：
+  那样要 windowsapp.lib / winmd 投影头 / 异步初始化，会把三端构建拖进平台依赖。
+  `OcrEngine.cpp` 的平台分支仍是 Win / macOS / Linux / 兜底四段齐全，macOS 与 Linux 走外部
+  `tesseract`（先试 `eng+chi_sim`，失败降级默认语言），缺引擎返回可读原因。
+  **macOS / Linux 没有实机验证**，不要往这两段塞未经验证的 Vision / 原生 OCR 代码。
+- 嵌入的 PowerShell 脚本**必须纯 ASCII（含注释）**：PS 5.1 按本地代码页（GBK）读无 BOM 的
+  `.ps1`，实测中文注释会让后面的 WinRT 类型解析成 null（「不能对 Null 值表达式调用方法」）。
+  `runWindowsOcr()` 开头有逐字节 ASCII 防呆；识别结果里的中文不受影响（stdout 显式 UTF-8）。
+- 临时脚本与临时 PNG 都用 **`QTemporaryDir` + 普通 QFile / `QPixmap::save`**，不用
+  `QTemporaryFile`：后者在 Windows 上一直持有底层句柄，外部进程打开时报「正由另一进程使用」。
+- WinRT OCR 会把每个汉字切成独立词并用空格相连，只取 `result.Text` 会得到「最 近 使 用」。
+  所以取词级 `BoundingRect`，拼接时只有「两边都是 CJK」才连写，中文标点一律紧贴；
+  归行容差取 3/4 行高（逗号/句号的基线比同行汉字低约半个字高），不写死像素以适配高 DPI。
+- 截图浮层**不设 parent**：调用方要先 `hide()` 宿主窗口，挂成子窗口会被一起藏掉。
+  面板用 `QPointer` 兜住浮层，析构时 `deleteLater()` 并恢复宿主可见性；`hide()` 到
+  `grabWindow()` 之间留 260ms 让桌面重绘，否则截到主窗口残影。
+- 识别是同步阻塞调用：宿主随时可能销毁面板（面板不缓存），异步回调容易踩悬空指针。
+  期间只用 `m_status->repaint()` 刷新状态，**不用 `processEvents()`**（会进事件循环导致重入销毁）。
+- 不注册第二个全局热键：全局热键只做「唤出首页搜索」是已定型的交互约定（第二部分第 3 条），
+  改它要先问。翻译 / 公式识别 / 结构化表格也不做，「表格文本」只是按空隙分列的 TSV 近似。
+
+## 文件占用释放（`plugins/filelock`，插件内部）
+
+- 三层同 memmon：`FileLockLogic.h`（纯 Qt Core：路径解析 / 展开 / 归一化 / 匹配 / 按 pid 归并，
+  可单独断言）、`FileLockProbe`（唯一碰原生 API 的地方，只出 Qt 值类型）、`FileLockPanel`（界面）。
+- **平台能力**：检测三端都有 —— Windows Restart Manager（官方接口，按文件查占用者）、
+  Linux `/proc/<pid>/fd` 符号链接、macOS 系统 `lsof -F pcn`（未在实机验证，失败返回原始错误）。
+  **「解除占用」只有 Windows**：`NtQuerySystemInformation(64)` 枚举句柄 → 按选中 pid 过滤 →
+  `DuplicateHandle` 复制到本进程 → `GetFinalPathNameByHandleW` 拿 DOS 路径 → 命中后
+  `DuplicateHandle(DUPLICATE_CLOSE_SOURCE)` 关源句柄。Linux/macOS 没有「替别的进程关 fd」的
+  普通用户接口，按钮置灰并给原因，不偷偷降级成杀进程。「强制结束」三端都有
+  （`TerminateProcess` / `SIGTERM`，刻意不发 `SIGKILL`，不替用户决定丢数据）。
+- **为什么检测与解除用两套机制**：RM 只给进程不给句柄，但比逐个 `NtQueryObject` 快几个数量级；
+  解除时才枚举句柄且按 pid 过滤，规模小得多。`NtQueryObject(ObjectNameInformation)` 会在同步
+  管道句柄上永久阻塞，`GetFinalPathNameByHandle` 不会，且直接给 DOS 路径（省掉卷映射）。
+- 路径比较统一走 `pathKey()`：手动把 `\` 换成 `/`（`QDir::fromNativeSeparators` 在 Unix 不转）、
+  解析符号链接、`cleanPath`，`caseInsensitive` 由调用方按平台传，header 内无 `#if`。
+  `GetFinalPathNameByHandle` 给的 `\\?\C:\...` / `\\?\UNC\...` 必须过 `fromWin32FinalPath()`
+  再去比，否则全不匹配。Linux 的 fd 目标会带 ` (deleted)` 后缀，要先 chop(10)。
+- 文件夹展开上限 512 个文件（`kMaxExpandedFiles`），超出置 `truncated` 并在状态栏提示缩小范围，
+  不静默只查前几个；递归与否由 `matchesPath()` 判断剩余路径里是否还有 `/`，避免「只查顶层」
+  在 procfs 上退化成隐式递归。
+- 检测放 `QThread::create` 工作线程：worker 只写一份 `QSharedPointer<ScanOutcome>`，结果回调
+  以 `this` 为 context（面板销毁后 Qt 丢弃投递）；线程对象 `finished → deleteLater`，
+  面板析构里 `wait()` 兜住正在跑的 worker。别把 RM / procfs 扫描放回 UI 线程。
+- 宿主自身 pid、Windows 的 pid 0/4、POSIX 的 pid ≤ 1 一律从可操作对象里排除；
+  「解除占用」与「强制结束」都走 `QMessageBox` 二次确认，前者要明确说明「进程不退出但
+  下次读写可能报错 / 崩溃 / 丢数据」。
+- 表格用 `QTableWidget` + 第一列 `ItemIsUserCheckable`；重建期间 `m_building` 吞掉
+  `itemChanged`，否则会误刷「已选择 N 个程序」。空态与表格放在 `QStackedWidget` 里切换，
+  **选页面不能用三元表达式**（`QLabel*` 与 `QTableWidget*` 无隐式转换，MSVC C2446）。
+
+## 共享（`plugins/share`，插件内部）
+
+- 四层：`ShareHttp.h`（纯函数：请求行/头解析、`percentDecode`、keep-alive 判定、
+  `Content-Disposition`、MIME、`humanSize`、`looksLikeVirtualNic`、`localAddresses`，
+  可单独断言）、`ShareStore`（数据 + 落盘）、`ShareServer`（HTTP 服务）、`SharePanel`（界面）。
+  `ShareWeb.h` 是内联单页 HTML，`indexHtmlData()` 直接返回 `const char*`，不额外落盘。
+- **刻意破例的单例**：`ShareStore::instance()` / `ShareServer::instance()` 在插件里是进程级
+  单例，且**不注册析构**（`new` 出来放着）。原因是宿主的 `IPanel* createPanel()` 不缓存面板，
+  同一个工具可以同时存在内嵌面板和独立窗口两份 —— 若面板持有服务，会变成「开两个窗口占两个
+  端口、各有一份自己的列表」。单例保证"一个端口 + 一份数据"，所有面板看同一份模型。
+  面板通过 `ShareStore::changed()` 重建视图，网页端靠 `/api/state` 2 秒轮询。
+- 不用 `QHttpServer`：Qt6 的 `QHttpServer` 在 6.4 之前只有技术预览、且不同发行版打包状态不一，
+  跨平台稳不住。这里只手写 HTTP/1.1 的一个子集（`QTcpServer` + `QTcpSocket`），
+  每个连接一个无 `Q_OBJECT` 的 `HttpConnection` 对象，三段式状态机
+  `parseHead → consumeBody → dispatch`，`Content-Length` 决定 body 何时读完。
+- **上传**走 `QSaveFile`（写临时文件 + `commit()` 原子替换），文件名先净化（去路径分隔符、
+  去 `..`、控制字符）再落 `uploads/`，重名自动加 `(1)`；`X-File-Name` 用 percent-encoded
+  传中文，不塞进 header 明文。**下载**按 `kDownloadChunk = 64KB` 分块，
+  `pumpDownload()` 盯着 `bytesToWrite() > kSocketHighWater` 就停手等 `bytesWritten`，
+  避免把 2GB 文件一次性灌进 socket 缓冲把内存打爆。
+- 上限集中在 `ShareStore`：文件 200 / 文本 50 / 单条文本 16KB / 一次展开目录 300 个文件 /
+  单文件上传 2GB。超限在接口层直接返回 4xx 或 `truncated` 提示，不静默截断。
+- **局域网地址排序**是这块最容易踩的坑：`QNetworkInterface` 会把 VMware / Hyper-V / WSL /
+  Docker 的虚拟网卡一起列出来，实测 VMnet8 会抢首位，手机扫到的是个连不通的地址。
+  所以 `looksLikeVirtualNic()` 按名字关键词降权，再按网段加权（192.168 / 10 / 172.16-31 优先），
+  最后 `.1` 结尾（多半是网关位）降权。断言程序里有「真实网卡优先」的用例，改权重先跑它。
+- 端口从 5421 起顺延，最多试 20 个；被占就换下一个并打日志，界面上显示实际端口。
+  桌面端 5 秒重新枚举一次网卡（插拔网线 / 换 WiFi 后地址会变），网页端不管这个。
+- **没有鉴权**，只适合可信局域网。别在 README 之外的地方暗示"安全"，也不要加"远程访问"
+  之类的引导；`uploads/` 是网页上传的副本，删除条目只删记录不删原文件（引用语义）。
+
+## WebSocket 调试（`plugins/websocket`，插件内部）
+
+- 四层：`WsProtocol.h`（纯逻辑：地址解析、客户端/服务端握手、帧编解码、关闭码，全 inline 可临时断言）、
+  `WsClient.*`（客户端连接层）、`WsServer.*`（服务端会话层）、`WebSocketPanel.*`（客户端页 / 服务端页 / 容器）。
+  **不用 Qt WebSockets**：锁定的 Qt 6.8.3 安装里没有该模块（`lib/cmake` 与 `bin` 都查过），
+  两端都用 `QTcpSocket` / `QSslSocket` / `QTcpServer` 自实现 RFC 6455，零新依赖、无平台分支。
+- **掩码方向由角色决定，写在一处**：`FrameReader(expectMasked)` 服务端=true（必须带掩码，解析时解掩码）；
+  客户端=false（带掩码即判错）。`encodeFrame(op, payload, mask)` 同理，服务端发帧统一 `mask=false`。
+  方向判反的表现是"每组载荷都变乱码"，排查先看这两处。
+- `WebSocketPanel` 里两页**同时存活**（QStackedWidget）：切页不打断正在跑的连接 / 监听是刻意的，
+  调试时常要一边当服务端一边用别的客户端连。代价是两页的 socket 常驻，面板销毁时一起收。
+- 服务端默认只绑 `127.0.0.1`，对外暴露必须用户勾「允许局域网访问」（绑 `0.0.0.0`）。
+  子协议留空 = 回显客户端提出的第一个（任何客户端都能连）；填了 = 只接受交集，无交集拒绝握手。
+  握手校验只查必须项（GET / HTTP 1.1 / `Upgrade` / `Connection` / `Version: 13` / Key 16 字节），
+  **不限制路径与 Origin** —— 这是本机调试服务端，接谁进来由用户决定。
+- **`~WsServer()` 必须 `blockSignals(true)` 后再收尾**：QObject 析构是先删子对象、后断自己的信号连接，
+  而 `m_server` 是页面的子对象；此时若发出 `clientDisconnected`，页面的槽照样被调用，
+  槽里的 `m_log` 已经先一步 delete → 退出时段错误（实测踩到，别去掉）。
+- 握手被拒走 `disconnectFromHost()`，**不要 `abort()`**：abort 丢弃未送达字节，客户端只会看到
+  "连接被重置"而拿不到 4xx 原因。会话清理交给 `disconnected`（open == false 时静默销毁）。
+- 超时全是 `QTimer::singleShot` + `sessionFor(id)` 复检：握手 8 秒、关闭 2 秒。
+  会话销毁后回调找不到 id 就自动失效，不需要给每个会话配 QTimer 成员。
+- 服务端**不做 TLS 监听**（要证书与私钥输入，超出"简易"范围）、不主动 ping（但必定回 pong，
+  载荷原样带回）、最多 64 个客户端、不协商扩展。这些都写进了 README 的已知边界。
+- **临时测试的坑**：测同线程里的服务端不能用 `waitForConnected` / `waitForReadyRead` ——
+  它们只阻塞在自己那个 socket 上，服务端收不到 `newConnection`，会误判成"服务端没响应"。
+  用轮询 + `QEventLoop` 的等待函数（`waitFor(pred, ms)`）。服务端另用独立实现的裸 socket
+  Python 客户端验证过互操作（握手 / 掩码 / 分片 / ping-pong / 1002 拒绝），别只用自己的客户端自证。
+
 ## 日志
 
 - 位置：`QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log`（不可漫游目录，避免企业漫游配置同步日志）。
@@ -540,12 +814,18 @@ add_subdirectory(plugins/mytool)
 
 | 现象 | 原因 | 正确做法 |
 | --- | --- | --- |
+| 翻译连续请求返回 411、长文本返回 103 | 有道演示接口有同 IP 频率限制与约 1000 字上限；MyMemory 单次只有 500 字 | 按 400 字分段串行、两次请求间隔 ≥1000ms，失败自动降级；自动翻译虽默认开启，仍必须防抖并限制请求间隔（见第五部分翻译一节） |
+| 译文里出现 `QUERY LENGTH LIMIT EXCEEDED`，或原文被原样返回 | MyMemory 超限时把错误文案塞进 `translatedText`；`langpair=autodetect\|xx` 会命中记忆库返回原文 | 解析时先查 `responseStatus` 再查错误文案；源语言一律由本地 `detectSource()` 推断后传明确码 |
+| 第三方 JSON 的数字状态码被判成失败 | 有道 `errorCode` 有时是 `"0"` 有时是数字 411，MyMemory `responseStatus` 同理 | 用 `scalarText()` 兼容字符串/数字/布尔，不要只按 `isString()` 读 |
+| 搜狗接口一律返回 `s10`，签名怎么算都不对 | 没先访问首页建立会话（缺 cookie），或握手与翻译请求用了不同 UA | 先 GET `fanyi.sogou.com/` 解析 `secretCode` / `uuid`，cookie 由 `QNetworkAccessManager` 自动保存；两处共用同一个浏览器 UA（见第五部分翻译一节） |
+| 搜狗把原文原样返回，或把译文翻成反方向 | 繁体目标不支持、源=目标时服务端自动反向、`en→ko` 返回 `status=-1` | `sogouDirectionError()` 在发请求前拦掉并降级，绝不把错译文当成功结果 |
+| 想「接腾讯翻译」却拿不到译文 | 腾讯翻译君免费 API 已关闭，网页接口需要 TCaptcha 滑块 Token 或登录态 | 不要伪装成数据源，也别硬塞跳转按钮凑数（原「腾讯网页 ↗」已按用户要求移除）；说明原因并保持四家真实服务即可 |
 | 新写的 `.cpp` 不参与编译，改了半天没效果 | `src/CMakeLists.txt` 的 `APP_SOURCES` 是**显式列表、没有用 GLOB** | 新增/删除源文件必须同步改列表 |
 | 界面一片裸控件，qss 完全不生效 | `CMAKE_AUTORCC` 没开，qrc 没被编译 | 保持 `set(CMAKE_AUTORCC ON)`，确认资源路径 `:/style.qss` |
 | 配置写不进 ini，或者 `setPath` 没用 | `QSettings` 默认构造在 Windows 上走注册表 | `QSettings(path, IniFormat)` + `setFallbacksEnabled(false)` |
 | ini 里出现 `[%General]` | `[General]` 是 INI 保留段名，Qt 会转义 | 组名用 `settings` |
 | `QLocalServer` 相关链接失败 | 它属于 Qt Network 模块 | `find_package(... Network)` + 链接 `Qt6::Network` |
-| 退出时崩在释放 QString/QWidget | 插件与主程序 CRT 不一致 | 插件统一 `MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"`（已在 `xtools_add_plugin` 里） |
+| 退出时崩在释放 QString/QWidget；或 Debug 构建一点插件就卡住后崩 `0xC0000374` | 插件与主程序 CRT 不一致——注意是「与宿主**逐配置一致**」而不是固定 /MD：固定 `MultiThreadedDLL` 在 Debug 里会与宿主 /MDd（`MSVCP140D`/`ucrtbased`）和 Qt debug DLL（`Qt6Cored`）各用各的堆，跨 DLL 传 `QString`/`QWidget` 直接堆损坏（Release 两边都是 /MD 所以长期没暴露） | `xtools_add_plugin` 里用 `MultiThreaded$<$<CONFIG:Debug>:Debug>DLL`（与 CMake 默认一致，Debug=/MDd、Release=/MD）；验证方法 `dumpbin /dependents` 看插件与 exe 的 CRT DLL 后缀（`D` 与否）是否相同 |
 | 高 DPI 下图标被裁或被放大到溢出 | 设了 `devicePixelRatio` 却按设备像素画 | 按**逻辑像素**坐标绘制，并给 1x/2x 两份 pixmap（见 `IconBadge`） |
 | 标题栏按钮只剩两个小点 | 继承了全局 `padding: 6px 14px` | 小按钮显式 `padding: 0; min-height: 0;` |
 | Windows 构建报找不到 `rc.exe` | 受限环境 vcvars 探不到 Windows SDK（`reg.exe` 被拦） | `build.bat` 里有 SDK 路径兜底，别删 |
@@ -577,6 +857,23 @@ add_subdirectory(plugins/mytool)
 | 自动格式化后光标跳到别的 token 上 | `QJsonDocument` 输出时按键名排序，字符流不再一一对应，"非空白字符锚点"会失效 | `mapCursorPosition()` 里先校验锚点、校验不过退回保行号映射 |
 | 粘贴走了一条没被监听的路径（右键菜单粘贴没格式化） | 各路粘贴在 Qt 里最终都落到 `insertFromMimeData()`，只管快捷键一定会漏 | 在 `JsonEditor::insertFromMimeData()` 里发信号，别在 `keyPressEvent` 里匹配 Ctrl+V |
 | 自动缩进把输入法的拼字打断/吞掉按键 | 拼字期间的按键还不是最终文本 | `handleAutoIndent()` 开头检查 `isComposing()` 直接返回 |
+| 进程表每 2 秒闪一下、选中的行也丢了 | 每次采样都 `clear()` 整表重建 | pid 序列没变就只改文字，变了才重建并恢复选中行与滚动位置（`MemMonPanel::rebuildTable`） |
+| 表格行高怎么调都是 20px | qss 的 `::item padding` 只管左右，行高来自 delegate 的 `sizeHint` | 用 `RowHeightDelegate` 设最小行高，别再和 qss 较劲 |
+| 下拉框右侧出现深色 L 形线 / 箭头消失 / 两个箭头压住文字 | 原生 `::drop-down` 的边框会被 qss 的 `padding` 挤到圆角框外；写规则修它又会让 Qt 停画默认箭头；`::down-arrow { image }` 会把图片重复画到当前项文字后，`background-image` 则整片平铺 | `::drop-down` 只写定位 + `border: none; background: transparent`（并给 `QComboBox` 右侧留 24px padding），箭头用面板里的自绘子控件 `ComboArrow`，位置在 `eventFilter` 里跟着 Resize 摆；每个用到 `QComboBox` 的面板都要各自补一份（翻译页三个下拉曾整页漏补，用户因此找不到引擎入口）；不要试图用 qss 画这个箭头 |
+| 读进程内存统计返回 0 / 打不开 | 用 `PROCESS_QUERY_LIMITED_INFORMATION` 读统计没问题，但刷工作集要 `QUERY_INFORMATION + SET_QUOTA` | 采样与回收分别开句柄，别指望一个权限位通吃 |
+| 调用系统 OCR 报「不能对 Null 值表达式调用方法」，WinRT 类型全是 null | `.ps1` 里写了中文注释：PowerShell 5.1 按本地代码页（GBK）解析无 BOM 的 UTF-8 脚本，注释乱码后连带破坏后面的类型解析（与 `.bat` 只能纯 ASCII 同源） | 脚本**连注释都保持纯 ASCII**；`runWindowsOcr()` 逐字节检查非 ASCII 并提前报错。识别结果里的中文由脚本显式设 `Console.OutputEncoding = UTF8` 保证，不受影响 |
+| 外部进程打不开刚生成的 `.ps1` / PNG，报「文件正由另一进程使用」 | `QTemporaryFile` 在 Windows 上会一直持有底层句柄，`close()` 之后也不释放 | 用 `QTemporaryDir` + 普通 `QFile` 写入（或 `QPixmap::save(path)`），写完即完全释放，目录析构时统一清理 |
+| OCR 中文结果变成「最 近 使 用」这种散字 | WinRT OCR 把每个汉字切成独立词并默认以空格相连，直接取 `result.Text` 没法还原 | 取词级 `BoundingRect`，拼接时只有两边都是 CJK 才连写、中文标点紧贴；表格模式按词间空隙插 Tab |
+| OCR 结果里「，．」单独占一行 | 中文标点基线比同行汉字低约半个字高，按行高一半聚类会被拆出去 | 归行容差取 3/4 行高（夹在 6..24），既不拆标点也不会把行距正常的两行并起来 |
+| 截图浮层跟着主窗口一起消失，或截完主窗口再也不出现 | 浮层设了 parent，宿主 `hide()` 时会连带隐藏；取消/销毁路径没恢复可见性 | 浮层不设 parent，面板用 `QPointer` 跟踪，成功/取消/析构三条路径都调 `restoreHostWindow()`；`hide()` 后延时 260ms 再抓屏 |
+| `QStackedWidget` 切页面那行报 C2446「无法从 QTableWidget\* 转换为 QLabel\*」 | 用三元表达式在两个不同 QWidget 子类指针里选一个，MSVC 找不到公共隐式转换 | 用 if/else 分别 `setCurrentWidget()`；同理 `QTextStream` 里三元出的 `QLatin1String` / `QString` 也会编译失败，统一用 `QStringLiteral` |
+| Windows 上「解除占用」明明找到了进程，却一个句柄都没关掉 | 拿 `GetFinalPathNameByHandleW` 的 `\\?\C:\...` 直接和 `QFileInfo` 路径比，设备前缀导致全部不匹配 | 先过 `fromWin32FinalPath()` 去 `\\?\`（UNC 转 `//host/share`），再 `pathKey()` 归一化后比较 |
+| 「只查文件夹顶层」在 Linux 上把深层文件也算进去了 | `/proc/<pid>/fd` 给的是完整真实路径，只判目录前缀会顺带命中所有子孙 | `matchesPath()` 非递归时要求前缀之后不含 `/`；递归时才放开 |
+| 手机上打开的共享地址转圈连不上，电脑上同一个端口却是通的 | `QNetworkInterface` 把 VMware / Hyper-V / WSL / Docker 的虚拟网卡一起列出来，实测 VMnet8 会抢首位 | 用 `looksLikeVirtualNic()` 按名字降权 + 网段加权 + `.1` 网关位降权，见第五部分共享一节 |
+| 网页收到的中文文件名是乱码，`+` 变成了空格 | 上传时文件名塞进 header，中文过不去；改用 `QUrlQuery::queryItemValue()` 解码又按 form 规则把 `+` 还原成空格 | 文件名走 percent-encoded（`X-File-Name`），解码用自己写的 `percentDecode()`，**保留 `+`** |
+| 共享开两个窗口就变成两个端口、两份列表 | 宿主 `createPanel()` 不缓存面板，把服务挂在面板上就等于每个面板一个服务 | `ShareStore` / `ShareServer` 用进程级单例且不析构，见第五部分共享一节 |
+| 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
+| 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 
 ---
 

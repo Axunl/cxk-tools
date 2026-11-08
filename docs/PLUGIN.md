@@ -104,12 +104,26 @@ add_subdirectory(plugins/mytool)
   （这是刻意的，避免虚表错位直接崩溃）。
 - **样式**：主程序已有全局 QSS，`QPushButton` / `QLineEdit` / `QPlainTextEdit` 直接用就是统一风格；
   想要强调按钮可以 `btn->setProperty("accent", true)`。
+  但 **`QComboBox` 例外**：全局 qss 为消掉原生 `::drop-down` 甩到圆角框外的边框写了规则，
+  Qt 因此不再画下拉三角。每个用到 `QComboBox` 的面板都要自己补一个自绘箭头子控件
+  （`WA_TransparentForMouseEvents`），并在 `eventFilter` 里跟着 Resize 摆到右侧 18px 区域
+  （参考 `MemMonPanel.cpp` / `TranslatePanel.cpp` 的 `ComboArrow`）；否则用户看不出那是可展开的
+  下拉框，会以为面板里根本没有可选项。
 - **弹窗类浮层**（补全候选、日期选择等）要自己给 popup 设 `objectName`：这类控件是顶层窗口，
   全局 qss 只能按 `QAbstractItemView#<objectName>` 命中，不设就是系统默认外观
   （参考 `plugins/jsonfmt/JsonEditor.cpp` 里的 `jsonCompleterPopup`）。
   另外**不要给 item view 本身加 `padding`**，它会把 viewport 撑得比内容还小，导致常驻滚动条。
+- **需要联网的插件要显式链 `Qt6::Network`**：`xtools_api` 只带 Core/Gui/Widgets，
+  `QNetworkAccessManager` / `QNetworkInterface` 少了这一行会链接失败。在插件的
+  `CMakeLists.txt` 里加 `target_link_libraries(mytool PRIVATE Qt6::Network)`
+  （参考 `plugins/ipquery` 与 `plugins/translate`）。翻译这类依赖第三方服务的工具还要在
+  README 里写清「需要联网」「文本会发给谁」「失败时怎么降级」，不能静默失败。
 - **不要自己弹独立窗口**：宿主已经提供「独立窗口」（页头按钮 / 磁贴右键），插件再弹自己的顶层窗口
   会出现两套窗口语义；普通对话框（文件选择等）不在此列。
+- **外部网页跳转用 `QDesktopServices::openUrl()`**：某家在线服务若没有可匿名自动调用的接口，
+  要做成跳转入口就用它（可用剪贴板把文本带过去），不要内嵌 WebEngine 或伪装成数据源；
+  状态栏要写清「译文不会自动回填、需手动操作」。注意这类入口仍会被用户当成多余按钮，
+  加之前先确认有人需要，别拿跳转凑「接入了某家服务」的数。
 
 ## 5. 调试与验证
 

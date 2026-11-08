@@ -3,7 +3,10 @@
 #
 # 为什么接口做成 INTERFACE 库（纯头文件）而不是编成动态库：
 #   插件与宿主之间只交换 ITool 的虚表指针和 Qt 值类型，没有共享的编译产物，
-#   因此不需要额外的运行库对齐问题；代价是改接口要升版本号（见 XTOOLS_API_VERSION）。
+#   不需要额外导出一个 ABI 库；代价是改接口要升版本号（见 XTOOLS_API_VERSION）。
+#   注意「没有共享编译产物」≠「不需要运行库对齐」：Qt 值类型（QString/QWidget）
+#   的内存照样跨 DLL 分配/释放，MSVC 下插件必须与宿主逐配置用同一套 CRT，
+#   见下面 xtools_add_plugin 里的 MSVC_RUNTIME_LIBRARY。
 # ---------------------------------------------------------------------------
 include_guard(GLOBAL)
 
@@ -33,10 +36,15 @@ function(xtools_add_plugin target)
         FOLDER "plugins"
     )
 
-    # MSVC 下插件与主程序必须用同一套运行库（同为 /MD），
-    # 否则跨 DLL 传 QString/QWidget 会在释放时炸在不同 CRT 堆上。
+    # MSVC 下插件与主程序必须用**同一套**运行库，否则跨 DLL 传 QString/QWidget
+    # 会在释放时炸在不同 CRT 堆上（STATUS_HEAP_CORRUPTION，0xC0000374，先卡死后崩溃）。
+    # 注意是「与宿主一致」而不是固定 /MD：宿主没设 MSVC_RUNTIME_LIBRARY 时按配置走
+    # 默认值（Debug=/MDd、Release=/MD），插件若被钉死成 /MD，Debug 构建就会和
+    # MSVCP140D/ucrtbased 的宿主、以及 Qt 的 debug DLL（Qt6Cored）混用两套堆。
+    # 这里显式写出与 CMake 默认一致的表达式，行为等价于不设，但把约束写在脸上。
     if(MSVC)
-        set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+        set_target_properties(${target} PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     endif()
 
     # macOS 上按惯例用 .dylib 后缀（默认 MODULE 也会给 .so，与文档/预期不一致）

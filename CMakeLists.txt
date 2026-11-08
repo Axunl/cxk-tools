@@ -54,6 +54,18 @@ add_subdirectory(src)
 # 内置工具（插件形式）。新增工具时在这里加一行 add_subdirectory。
 add_subdirectory(plugins/jsonfmt)
 add_subdirectory(plugins/calc)
+add_subdirectory(plugins/ipquery)
+add_subdirectory(plugins/memmon)
+add_subdirectory(plugins/filelock)
+add_subdirectory(plugins/ocr)
+add_subdirectory(plugins/translate)
+add_subdirectory(plugins/colorpicker)
+add_subdirectory(plugins/jwt)
+add_subdirectory(plugins/cron)
+add_subdirectory(plugins/textkit)
+add_subdirectory(plugins/regex)
+add_subdirectory(plugins/share)
+add_subdirectory(plugins/websocket)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。
