@@ -29,6 +29,11 @@ constexpr auto kGroupUsage = "usage";
 constexpr auto kGroupRecent = "recent";
 /// 窗口几何：ui/<name>/geometry = QWidget::saveGeometry() 的字节流。
 constexpr auto kGroupUi = "ui";
+/// 更新检查（见 UpdateChecker）：update/auto_check、update/last_check、update/skipped_version。
+constexpr auto kGroupUpdate = "update";
+constexpr auto kKeyAutoCheck = "auto_check";
+constexpr auto kKeyLastCheck = "last_check";
+constexpr auto kKeySkippedVersion = "skipped_version";
 
 #ifdef Q_OS_WIN
 constexpr auto kRunKeyPath = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -224,6 +229,60 @@ int Settings::usage(const QString &toolId) const
 void Settings::bumpUsage(const QString &toolId)
 {
     m_settings.setValue(QLatin1String(kGroupUsage) + QLatin1Char('/') + toolId, usage(toolId) + 1);
+    m_settings.sync();
+}
+
+bool Settings::autoCheckUpdate() const
+{
+    // 默认开：这是个桌面工具，用户不会主动点「检查更新」，默认关等于永远不更新
+    return m_settings.value(QLatin1String(kGroupUpdate) + QLatin1Char('/') + QLatin1String(kKeyAutoCheck),
+                            true)
+        .toBool();
+}
+
+void Settings::setAutoCheckUpdate(bool on)
+{
+    m_settings.setValue(QLatin1String(kGroupUpdate) + QLatin1Char('/') + QLatin1String(kKeyAutoCheck), on);
+    m_settings.sync();
+}
+
+QDateTime Settings::lastUpdateCheck() const
+{
+    const QString raw = m_settings
+                            .value(QLatin1String(kGroupUpdate) + QLatin1Char('/')
+                                   + QLatin1String(kKeyLastCheck))
+                            .toString();
+    if (raw.isEmpty())
+        return QDateTime();
+
+    QDateTime dt = QDateTime::fromString(raw, Qt::ISODateWithMs);
+    if (!dt.isValid())
+        dt = QDateTime::fromString(raw, Qt::ISODate);
+    if (!dt.isValid())
+        return QDateTime();
+
+    // 统一换算到 UTC：手工编辑过 ini 时可能写的是本地时间，不换算会让节流算错好几小时
+    return dt.toUTC();
+}
+
+void Settings::setLastUpdateCheck(const QDateTime &when)
+{
+    m_settings.setValue(QLatin1String(kGroupUpdate) + QLatin1Char('/') + QLatin1String(kKeyLastCheck),
+                        when.toUTC().toString(Qt::ISODate));
+    m_settings.sync();
+}
+
+QString Settings::skippedVersion() const
+{
+    return m_settings.value(QLatin1String(kGroupUpdate) + QLatin1Char('/')
+                            + QLatin1String(kKeySkippedVersion))
+        .toString();
+}
+
+void Settings::setSkippedVersion(const QString &version)
+{
+    m_settings.setValue(QLatin1String(kGroupUpdate) + QLatin1Char('/') + QLatin1String(kKeySkippedVersion),
+                        version);
     m_settings.sync();
 }
 

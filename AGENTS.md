@@ -83,6 +83,11 @@
 - **唯一例外：`.bat` / `.cmd`**。cmd.exe 按本地代码页（中文 Windows 是 GBK/936）逐字节解析脚本，
   存成 UTF-8 会吞换行、整个脚本崩掉（本项目已踩过两次）。这两个文件**只能纯 ASCII**，
   需要中文文案就放到 `.cpp` 里，脚本里只留英文注释与逻辑。
+- 安装器脚本：`installer/windows/cxk-tools.iss` 保持 **UTF-8 无 BOM**（Inno Setup 6 会自动识别
+  合法 UTF-8）。如果哪天向导里的中文变乱码，第一件事是把该文件改存成「UTF-8 with BOM」并在
+  `.editorconfig` 里为 `*.iss` 记这一条例外，**不要去改文案**。
+  `installer/windows/lang/ChineseSimplified.isl` 是第三方翻译文件（Inno Setup 官方
+  「unofficial translation」，维护者信息保留在文件头），原样入库，不要翻译或重排它。
 - 编辑器由仓库根的 `.editorconfig` 兜底（默认 `charset = utf-8`，`*.bat`/`*.cmd` 锁 `latin1`），
   VS Code / CLion / Qt Creator 打开即生效，不用配个人设置。
 - 改完自查（应无输出）：
@@ -107,6 +112,11 @@
 - 触发清单（命中任意一条就要动 README）：
   - 新增 / 删除 / 修改工具 → 改「支持的工具」能力表。
   - 构建、打包方式变化（命令、脚本名、生成器、产物位置）→ 改「环境要求」「构建」「打包」章节。
+  - **改发布资产名 / `latest.json` 字段 / feed 地址 / 安装器静默参数** → 必须同时改
+    `scripts/gen-release-manifest.py`（`SUFFIX_RULES`）、`src/core/UpdateInfo.h`（`pickAsset`）、
+    `src/core/UpdateChecker.h`（`feedUrl`）、`installer/windows/cxk-tools.iss` 与 README 的
+    「自动更新」章节。这五处只要有一处漏改，更新链路就断，而且**不会在构建期报错**，
+    只会在用户点「检查更新」时表现为「已是最新」或「暂不提供该平台的安装包」。
   - 依赖或环境要求变化（Qt 版本、编译器、`libx11-dev` 等系统包）→ 改环境要求表。
   - 平台支持状态变化（某能力从"待补"变"已实现"，或反过来）→ 同步「平台差异」表与「已知边界」。
   - 命令行参数、配置文件位置或格式、默认快捷键、交互约定变化 → 改对应章节。
@@ -126,8 +136,9 @@ cxk-tools/
 ├── CMakeLists.txt              顶层：Qt 版本、编译选项、输出布局、add_subdirectory 列表
 ├── CMakePresets.json           IDE 与命令行共用的 debug / release 配置（含本机 Qt 路径）
 ├── cmake/
-│   ├── XToolsHelpers.cmake     xtools_api 接口库 + xtools_add_plugin() 插件工厂
-│   └── DeployQt.cmake          Windows 构建后把 Qt 运行库部署到 bin/（让 IDE 里能直接跑）
+│   ├── XToolsHelpers.cmake     xtools_api 接口库 + xtools_add_plugin() 插件工厂（含 install 规则）
+│   ├── DeployQt.cmake          Windows 构建后把 Qt 运行库部署到 bin/（让 IDE 里能直接跑）
+│   └── PruneQtRuntime.cmake    三平台共用的运行库裁剪脚本（cmake -P 调用，逐项删并打印字节数）
 ├── .editorconfig               编码/行尾兜底（规则 5）
 ├── src/
 │   ├── CMakeLists.txt          主程序目标；APP_SOURCES 是显式文件列表
@@ -141,16 +152,20 @@ cxk-tools/
 │   │   ├── HotkeyManager.*     全局热键（Win32 / X11；macOS 待补）
 │   │   ├── SingleInstance.*    QLocalServer 单实例与二次激活
 │   │   ├── IconBadge.*         字母徽章图标（插件没给图标时的兜底）
+│   │   ├── UpdateInfo.h        纯逻辑：版本号比较、latest.json 解析、资产挑选（可单测）
+│   │   ├── UpdateChecker.*     拉 latest.json、比对版本、下载并校验 SHA256
 │   │   ├── WindowGeometry.h    窗口几何的恢复/保存 + 屏幕外失效保护
 │   │   └── Log.*               日志落盘 + 消息处理器
 │   ├── ui/                     只向下依赖 core/api
 │   │   ├── MainWindow.*        自绘标题栏 + 页头 + QStackedWidget（首页/设置/工具）
 │   │   ├── HomePage.*          首页：搜索框 + 「最近使用 / 全部 / 本机应用」磁贴网格
 │   │   ├── ToolWindow.*        单个工具的独立窗口（每工具最多一个）
-│   │   ├── SettingsPage.*      热键录制、开机自启、插件加载状态
+│   │   ├── SettingsPage.*      热键录制、开机自启、插件加载状态、检查更新
+│   │   ├── UpdateDialog.*      更新对话框：版本对比 + release notes + 下载进度
 │   │   └── TrayController.*    托盘图标与右键菜单
 │   └── app/
 │       ├── main.cpp            启动顺序（见文件头注释，改动前先读）
+│       ├── app.rc.in           Windows 版本资源 + 图标模板（configure_file 生成 app.rc）
 │       └── resources/          style.qss + resources.qrc
 ├── plugins/
 │   ├── jsonfmt/{JsonFmtTool.*, JsonFmtPanel.*, JsonEditor.*, JsonHighlighter.*, JsonText.h}
@@ -167,7 +182,15 @@ cxk-tools/
 │   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
 │   └── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
-├── scripts/{build.bat, build.sh, package.bat}
+├── assets/
+│   ├── app.ico                 Windows 图标（PNG 条目的多尺寸 ICO，被 src/app/app.rc.in 引用）
+│   ├── app.icns                macOS 图标（icp4~ic10，打包时拷进 .app/Contents/Resources）
+│   └── icon-512.png            源图，改图标时从它重新导出上面两个
+├── installer/
+│   ├── windows/cxk-tools.iss   Inno Setup 6 脚本（AppId 固定，UTF-8 无 BOM）
+│   └── windows/lang/ChineseSimplified.isl   第三方简体中文向导翻译，原样入库
+├── scripts/{build.bat, build.sh, package.bat, package-macos.sh, gen-release-manifest.py}
+├── .github/workflows/{ci.yml, release.yml}
 └── docs/{PLUGIN.md, main-preview.png}
 ```
 
@@ -264,15 +287,169 @@ Windows 上构建结束会自动跑 `cmake/DeployQt.cmake`，把 Qt 运行库（
 脚本按「构建配置」写 stamp（`.qt-deploy-<Config>`），只有首次构建才真正调用 `windeployqt`；
 删掉整个 `bin/` 或切换 Debug/Release 后会重新部署。想跳过可加 `-DXTOOLS_DEPLOY_QT=OFF`。
 
-插件目录固定为「可执行文件同级 `/plugins`」，三平台一致（macOS 上是 `xxx.app/Contents/MacOS/plugins`）。
+## 打包与发布
 
-## 打包
+### 版本号只有一个来源
+
+- `CMakeLists.txt` 顶部的 `project(cxk-tools VERSION x.y.z)` 是**唯一**版本定义。configure 时它会被写进
+  `build/xtools-version.txt`，`package.bat` / CI 都读这个文件 —— **不要去 grep 源码或另外维护一份**。
+- 该值经 `APP_VERSION` 宏进 `QApplication::applicationVersion()`，同时进 `app.rc` 的 `FILEVERSION`、
+  安装器的 `AppVersion`（`ISCC /DAppVersion=`）、`latest.json` 的 `version`。四处不一致用户会看到
+  「关于里是 0.1.0、安装器是 0.0.9」这类问题。
+- 发版 tag 必须是 `v<同一个版本>`：`release.yml` 的 `prepare` 任务会把 tag 去掉 `v` 后与
+  `CMakeLists.txt` 比对，**不一致直接 fail**，不允许带着错版本号发出去。
+
+### 三平台入口
 
 ```bat
-scripts\package.bat          :: 重新构建 -> dist\（exe + Qt 运行库 + plugins\）
+scripts\package.bat            :: Windows：构建 -> dist\windows-x64\ -> zip -> 安装器
 ```
 
-macOS 用 `macdeployqt`，Linux 把可执行文件与 `plugins/` 放同一目录。`dist/` 与 `build/` 都已被忽略，不要提交。
+```sh
+scripts/package-macos.sh       # macOS：构建 -> cxk-tools.app -> strip/codesign -> dmg
+                               # Linux 由 CI 直接 tar 打包（cmake --install 出来的目录 + plugins/）
+```
+
+三平台走同一条骨架：`cmake --install --prefix <stage>` → 部署 Qt 运行库 → 裁剪 → 压缩。
+**`cmake --install` 是唯一的 staging 出口**，安装规则写在 `install(TARGETS ...)` 与
+`xtools_add_plugin()` 里（新增插件自动带上，不需要改打包脚本）。所以新增源文件/资源时若忘了加
+install 规则，症状是「本机能跑、装完找不到插件」。
+
+### 产物命名契约（更新器依赖它）
+
+```
+cxk-tools-<ver>-windows-x64.zip          便携版（解压即用）
+cxk-tools-<ver>-windows-x64-setup.exe    Windows 安装器
+cxk-tools-<ver>-macos-arm64.dmg          macOS 安装包
+cxk-tools-<ver>-macos-x64.dmg
+cxk-tools-<ver>-linux-x64.tar.gz
+latest.json / SHA256SUMS.txt             清单（不作为下载资产）
+```
+
+- 名字由 `scripts/gen-release-manifest.py` 的 `SUFFIX_RULES` 反查 `(platform, kind)`，
+  再由 `src/core/UpdateInfo.h` 的 `pickAsset()` 按平台选资产。**改名必须同时改这三处**，
+  否则更新器会「找到 release 但没有一个能用的资产」（表现为 `parseLatestJson` 失败或
+  `pickAsset` 返回空，用户看到"暂不提供该平台的安装包"）。
+- `kind` 只有四种：`installer` / `portable` / `dmg` / `tarball`。Windows 优先挑 `installer`
+  （能静默升级 + 覆盖安装），没有就退回 `portable`（只下载、交给用户手动解压）。
+
+### `latest.json` 契约
+
+Feed 地址写死在 `UpdateChecker::feedUrl()`：
+
+```
+https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
+```
+
+`releases/latest/download/...` 会自动指向最新一个**非预发布**的 release，所以 `latest.json`
+只作为资产挂在 release 上，不需要另建 gh-pages 分支。环境变量 `XTOOLS_UPDATE_FEED` 可覆盖
+（本地假清单测通链路就靠它，别为测试改死地址）。
+
+```json
+{
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "notes": "## 变更\n- …",
+  "pageUrl": "https://github.com/Axunl/cxk-tools/releases/tag/v0.2.0",
+  "assets": [
+    { "platform": "windows-x64", "kind": "installer",
+      "name": "cxk-tools-0.2.0-windows-x64-setup.exe",
+      "url": "https://github.com/.../cxk-tools-0.2.0-windows-x64-setup.exe",
+      "sha256": "…", "size": 10485760 }
+  ]
+}
+```
+
+- `notes` 是 Markdown，对话框直接 `QTextBrowser::setMarkdown()` 渲染；CI 用 `git log` 生成，
+  所以提交标题就是给用户看的变更说明，别写「wip」「fix typo」。
+- `version` 缺省或无任何有效 asset 时 `parseLatestJson()` 判失败并清空输出，界面报「检查失败」而不是
+  「已是最新」—— 把解析失败当成功是最容易蒙过测试的坑。
+- 版本比较只按段做数值比较、缺段补 0，**预发布后缀（`-beta.1`）不参与比较**。目的只是判断"有没有新版"，
+  不做完整的 semver 语义。
+
+### 安装器（Inno Setup 6）
+
+- 编译要传版本：`ISCC.exe /DAppVersion=0.2.0 installer\windows\cxk-tools.iss`（忘了传，脚本里
+  `#ifndef AppVersion` 会直接 `#error`，不会静默产出 0.0.0 的安装包）。
+- `AppId` 是**固定 GUID**，覆盖升级靠它；换掉会让新版本装成第二个程序、控制面板里出现两条。
+- 压缩 `lzma2/ultra64` + `SolidCompression=yes` + `LZMAUseSeparateProcess=yes`（后者防止 Inno 的
+  压缩线程在 CI 上吃满内存失败）。
+- **不做** `[UninstallDelete]`：用户配置（`cxk-tools.ini`、`logs/`）不随卸载删除，重装后设置还在。
+- 应用内更新调用安装器的参数是固定的：
+
+  ```
+  /SILENT /CLOSEAPPLICATIONS /NORESTART
+  ```
+
+  `[Run]` 里刻意**不加** `skipifsilent`，这样静默升级结束后新版本会自动被拉起。
+  `CLOSEAPPLICATIONS` 靠 Restart Manager 关掉正在运行的旧实例，所以新进程要等安装器退出后再起，
+  不能反过来抢文件锁。
+
+### 裁剪清单与取舍
+
+`cmake/PruneQtRuntime.cmake` 逐项删并打印字节数，每项都有「为什么能删」的注释。
+**注意分工**：体积最大那几项是先用 `windeployqt` 的参数**根本不让它拷进来**，prune 只是兜底
+（某些版本的 windeployqt 不认参数还是会拷）。所以正常一轮 prune 只删到 5 项、约 1.39 MB ——
+如果哪天 prune 打印出删了 15 MB，说明 windeployqt 的开关失效了，去看那行命令。
+
+| 项 | 典型体积 | 谁负责挡掉 | 为什么能删 |
+| --- | --- | --- | --- |
+| `dxcompiler.dll` + `dxil.dll` | ≈15.8 MB | `--no-system-dxc-compiler` + prune 兜底 | RHI 的 D3D 着色器编译器，纯 Widgets 光栅渲染用不到 |
+| `opengl32sw.dll` | ≈20 MB | `--no-opengl-sw` + prune 兜底 | 软件 OpenGL 兜底实现，有显卡驱动就走不到它 |
+| `vc_redist.x64.exe` | ≈25 MB | `--no-compiler-runtime` + prune 兜底 | 改由 app-local CRT DLL 满足，不必再跑一遍安装程序 |
+| `d3dcompiler_47.dll` | ≈4 MB | prune | D3D/ANGLE 才要 |
+| `Qt6Svg.dll` + `imageformats/qsvg.dll` + `iconengines/` | ≈1 MB | prune | 仓库无 `.svg`，图标是 `IconBadge` 运行期画的 |
+| `tls/qopensslbackend.dll` `tls/qcertonlybackend.dll` | ≈1.4 MB | prune | Windows 用系统 SChannel 后端，实测 HTTPS 正常 |
+| `translations/` `qml/` `generic/` | ≈2 MB | `--no-translations` + prune 兜底 | 界面文案自备；无 QML；`generic` 是 TUIO 触摸协议 |
+| `vccorlib140.dll` `concrt140.dll` | 小 | prune | C++/CX 与并发运行时才用，拷 CRT 时顺带进来的 |
+
+- **VC 运行库用 app-local 而不是 `vc_redist`**：`windeployqt` 加 `--no-compiler-runtime`，
+  再从 `VCToolsRedistDir`（找不到就用 PowerShell 在 VS 目录里搜最新的 `Microsoft.VC*.CRT`）
+  拷 `msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll`。省掉 25 MB 的 redist 安装器，
+  代价是这三个 DLL 跟着程序走（正常，绝大多数 Qt 应用都这么发）。
+- 裁剪脚本是**逐项删、逐项打印**，不用 `file(GLOB)` 遍历删除：漏删一项只是多几 MB，
+  误删一个必需 DLL 会让程序静默退出，必须能一眼看出删了什么。
+- 曾经把 `tls/qopensslbackend.dll` 删掉后担心 HTTPS 失效，实测 `--check-update` 拉到真实地址
+  返回 `HTTP 404`（证明请求发出去了、只是路径不存在），所以 SChannel 后端在起作用。
+  **再动 TLS 相关文件必须重跑这条验证**。
+- 体积基线（0.1.0，Windows x64 Release）：构建产物 `build/bin` 约 43 MB → staging **29.36 MB**
+  → zip **12.66 MB**。如果哪天 zip 突然涨了 10 MB 以上，先怀疑 `windeployqt` 又把
+  dxcompiler / redist / opengl32sw 塞回来了（看 prune 的删除条数就知道）。
+
+### CI 与发版
+
+| 文件 | 触发 | 做什么 |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | push / PR | 三平台只编译（不打包），确认没有平台专属编译错误 |
+| `.github/workflows/release.yml` | 推 `v*` tag，或手动 `workflow_dispatch` | 校验版本 → 三平台打包 → 生成清单 → `gh release create` |
+
+- `ci.yml` 的 Linux 任务要装 `libx11-dev libxcb1-dev libgl1-mesa-dev`（热键走 X11），
+  Windows 任务用 `ilammy/msvc-dev-cmd` 进 MSVC 环境，macOS 用 `macos-14`（arm64 runner）。
+- `release.yml` 里 Inno Setup 优先直连 GitHub release 下载 6.7.4，失败 fallback 到 `choco install innosetup`；
+  两条都失败就整个任务失败，**不要**跳过安装器继续发版（用户会拿到一个没有 setup.exe 的 release）。
+- release 已存在时用 `gh release upload --clobber` + `gh release edit` 覆盖，允许「同一个 tag 重跑」，
+  不需要先删 release。
+- 清单脚本只依赖 Python 标准库，本地也能跑：
+
+  ```sh
+  python scripts/gen-release-manifest.py --version 0.1.0 --tag v0.1.0 --dir dist
+  ```
+
+  `--dir` 是产物所在目录（按 `SUFFIX_RULES` 识别），`--out` 省略时与 `--dir` 相同，
+  `--notes` 可传一个 markdown 文件作为 `latest.json` 的 `notes`（CI 用 `git log` 生成）。
+
+### 更新链路（改打包前先看这里）
+
+`AppController::checkUpdate()` 是三处触发（设置页按钮 / 托盘菜单 / 启动静默检查）的唯一收敛点，
+启动检查还会尊重 `autoCheckUpdate()` 与 24 小时节流。下载走临时目录，边下边算 SHA256，
+结束再比对 `size`，不符就删文件报错 —— **不要改成「下完再说」**，半个安装包被静默放行是最坏的结果。
+
+- `--check-update` 是诊断入口：打印结果后立刻退出（`QTimer::singleShot(0, ...)` + `QCoreApplication::exit`，
+  在 `app.exec()` 之前 `quit()` 会被 Qt 忽略）。它和 `--shot` 一样**跳过单实例锁**，否则用户开着程序时
+  脚本永远拿不到结果。
+- 静默检查只用托盘气泡提示，不弹窗抢焦点；气泡被点击才打开 `UpdateDialog`。
+- 装完的包才有升级能力（`isInstalledBuild()` 判断同目录有无 `unins000.exe`）；便携版退化成
+  「打开发布页」让用户自己换。
 
 ## 界面验证（改 ui/ 或 qss 必做）
 
@@ -874,6 +1051,11 @@ add_subdirectory(plugins/mytool)
 | 共享开两个窗口就变成两个端口、两份列表 | 宿主 `createPanel()` 不缓存面板，把服务挂在面板上就等于每个面板一个服务 | `ShareStore` / `ShareServer` 用进程级单例且不析构，见第五部分共享一节 |
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
+| `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |
+| 用户开着程序时，脚本里的 `--check-update` / `--shot` 直接退出、什么都不输出 | 单实例互斥把它当成第二个实例，唤出旧窗口后自己结束 | 诊断命令（`--shot` / `--check-update`）在 `main.cpp` 里跳过 `tryLock()` 与 `setActivateHandler` |
+| 更新对话框里说明文字下面多出一根"横线" | `QTextBrowser` 默认按需横向滚动，长行触发横向滚动条 | `setLineWrapMode(QWidgetText::WidgetWidth)` + `setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff)` |
+| `package.bat` 打包时报 `vc_redist.x64.exe` 拒绝访问 | `windeployqt` 默认塞 25 MB 的 redist 安装器，且该文件被占用 | `--no-compiler-runtime` + 拷 app-local CRT DLL，prune 脚本里再兜底删一次 |
+| 安装器向导中文乱码 | `.iss` 被某次编辑存成了 GBK 或带 BOM 的 UTF-8 | 保持 UTF-8 无 BOM（Inno 6 能识别）；仍乱码就改存 UTF-8 with BOM，**不要改文案**（规则 5） |
 
 ---
 
@@ -883,8 +1065,11 @@ add_subdirectory(plugins/mytool)
 2. 改动涉及界面 / qss：用 `--shot` 出图并**真的看过**，随后删除截图。
 3. 改动涉及纯逻辑：临时断言程序跑过，贴出通过数量，然后 `rm -rf build/_verify`。
 4. 改动涉及平台分支：Win / Linux / macOS 三段都能编译，兜底分支给出可读失败原因。
-5. 同步文档（规则 6）：改架构、构建、约定、平台能力 → 改本文件；改用法、支持工具、环境要求 → 改 `README.md`；
+5. 改动涉及打包 / 更新：本地跑一遍 `scripts\package.bat`，确认 `dist\` 下的产物名与体积基线相符
+   （见「裁剪清单与取舍」），并用 `XTOOLS_UPDATE_FEED` 指向本地假清单验一遍
+   `--check-update`；改过资产名就先确认 `gen-release-manifest.py` 能把它归到正确的 `kind`。
+6. 同步文档（规则 6）：改架构、构建、约定、平台能力 → 改本文件；改用法、支持工具、环境要求 → 改 `README.md`；
    改插件接口 → 改 `docs/PLUGIN.md` 并升 `XTOOLS_API_VERSION`。
-6. 编码自查（规则 5 的三条命令），应无输出。
-7. `git status --porcelain` 只剩预期文件：无 `build/`、`dist/`、截图、临时工程、`aqtinstall.log`。
-8. 交付说明写清「跑了什么、结果如何」，不要只写"应该没问题"。
+7. 编码自查（规则 5 的三条命令），应无输出。
+8. `git status --porcelain` 只剩预期文件：无 `build/`、`dist/`、截图、临时工程、`aqtinstall.log`。
+9. 交付说明写清「跑了什么、结果如何」，不要只写"应该没问题"。

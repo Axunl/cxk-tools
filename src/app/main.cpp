@@ -44,17 +44,24 @@ int main(int argc, char *argv[])
         qWarning() << "main: 无法加载样式表 :/style.qss";
     }
 
+    // --check-update / --shot 是「跑一次就退出」的诊断命令：它们不该被正在运行的实例挡住，
+    // 否则想用脚本验证更新链路或做界面回归时，只要用户开着程序就永远拿到"已有实例在运行"。
+    const QStringList args = app.arguments();
+    const bool diagnostic = args.contains(QStringLiteral("--check-update"))
+                            || args.contains(QStringLiteral("--shot"));
+
     SingleInstance guard(QStringLiteral("cxk-tools-single-instance"));
-    if (!guard.tryLock()) {
+    if (!diagnostic && !guard.tryLock()) {
         qInfo() << "main: 已有实例在运行，通知其唤出主窗口后退出";
         return 0;
     }
 
     // --autostart 由开机自启项传入：只驻留托盘，不弹窗打扰用户
-    const bool autostart = app.arguments().contains(QStringLiteral("--autostart"));
+    const bool autostart = args.contains(QStringLiteral("--autostart"));
 
     AppController controller;
-    guard.setActivateHandler([&controller] { controller.showMainWindow(); });
+    if (!diagnostic)
+        guard.setActivateHandler([&controller] { controller.showMainWindow(); });
     controller.start(autostart);
 
     return app.exec();

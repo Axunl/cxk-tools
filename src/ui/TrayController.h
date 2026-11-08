@@ -33,8 +33,11 @@ signals:
     void launcherRequested();
     void mainWindowRequested();
     void settingsRequested();
+    void checkUpdateRequested();
     void restartRequested();
     void quitRequested();
+    /// 用户点了气泡提示（目前用于「发现新版本 → 打开更新对话框」）。
+    void messageClicked();
 
 private:
     QSystemTrayIcon *m_tray = nullptr;

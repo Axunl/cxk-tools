@@ -180,6 +180,8 @@ void MainWindow::buildUi()
     connect(m_home, &HomePage::appActivated, this, &MainWindow::launchLocalApp);
 
     connect(m_settingsPage, &SettingsPage::restartRequested, this, &MainWindow::restartRequested);
+    // 更新请求原样上抛：界面层不持有 UpdateChecker，避免 ui 反向依赖 core 的网络实现细节
+    connect(m_settingsPage, &SettingsPage::checkUpdateRequested, this, &MainWindow::checkUpdateRequested);
     connect(m_settingsPage, &SettingsPage::hotkeyChanged, this, [this](const QKeySequence &seq) {
         // 标题栏那行提示要跟着变，否则用户改完热键看到的还是旧组合
         if (m_hotkeyHint)
@@ -370,6 +372,18 @@ void MainWindow::setHotkeyStatus(const QString &text, bool ok)
 {
     if (m_settingsPage)
         m_settingsPage->setHotkeyStatus(text, ok);
+}
+
+void MainWindow::setUpdateStatus(const QString &text, bool ok)
+{
+    if (m_settingsPage)
+        m_settingsPage->setUpdateStatus(text, ok);
+}
+
+void MainWindow::setUpdateChecking(bool checking)
+{
+    if (m_settingsPage)
+        m_settingsPage->setUpdateChecking(checking);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

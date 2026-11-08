@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS 应用包元数据模板。
+
+  为什么不在 CMake 里开 MACOSX_BUNDLE：那样 macOS 的产物会从
+  build/bin/cxk-tools 变成 build/bin/cxk-tools.app/Contents/MacOS/cxk-tools，
+  而插件的输出目录是按「可执行文件同级/plugins」写死的（三平台一致），
+  bundle 一开就要给插件目录写平台特例。这里改成只在打包阶段拼 .app，
+  开发期三平台布局完全一致，打包后 Contents/MacOS/plugins 又刚好对上
+  PluginManager::pluginDir() 的约定。
+
+  @VERSION@ 由 scripts/package-macos.sh 用构建目录里的 xtools-version.txt 替换。
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>CXK 工具箱</string>
+    <key>CFBundleExecutable</key>
+    <string>cxk-tools</string>
+    <key>CFBundleIconFile</key>
+    <string>app.icns</string>
+    <key>CFBundleIdentifier</key>
+    <string>cn.cxk.xtools</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>CXK Tools</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>cxk-tools</string>
+</dict>
+</plist>

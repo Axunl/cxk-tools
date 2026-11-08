@@ -5,11 +5,14 @@
 #include "PluginManager.h"
 #include "Settings.h"
 #include "ToolRegistry.h"
+#include "UpdateChecker.h"
 #include "ui/MainWindow.h"
 #include "ui/TrayController.h"
+#include "ui/UpdateDialog.h"
 
 #include <QApplication>
 #include <QDebug>
+#include <QEventLoop>
 #include <QProcess>
 #include <QTimer>
 
@@ -20,8 +23,52 @@ AppController::AppController(QObject *parent)
 
 AppController::~AppController() = default;
 
+int AppController::runHeadlessCheck()
+{
+    // 用局部检查器而不是成员：这个分支不创建窗口，也不需要托盘/设置页的联动。
+    UpdateChecker checker;
+    QEventLoop loop;
+    int code = 2;
+
+    connect(&checker, &UpdateChecker::updateAvailable, &loop, [&code, &loop](const update::Info &info) {
+        qInfo().noquote() << "CHECK_UPDATE_RESULT=update-available version=" << info.version
+                          << "tag=" << info.tag << "assets=" << info.assets.size();
+        code = 0;
+        loop.quit();
+    });
+    connect(&checker, &UpdateChecker::upToDate, &loop, [&code, &loop](const QString &version) {
+        qInfo().noquote() << "CHECK_UPDATE_RESULT=up-to-date version=" << version;
+        code = 1;
+        loop.quit();
+    });
+    connect(&checker, &UpdateChecker::failed, &loop, [&code, &loop](const QString &message) {
+        qWarning().noquote() << "CHECK_UPDATE_RESULT=failed reason=" << message;
+        code = 2;
+        loop.quit();
+    });
+
+    checker.check();
+
+    // 兜底超时：transferTimeout 之外再兜一层，保证脚本调用不会挂住
+    QTimer::singleShot(25000, &loop, &QEventLoop::quit);
+    loop.exec();
+    return code;
+}
+
 void AppController::start(bool autostartLaunch)
 {
+    // --check-update：无界面检查一次更新后退出。这是更新链路的可自动化验证入口：
+    // 结果写进日志（CHECK_UPDATE_RESULT=…），配合 XTOOLS_UPDATE_FEED 可以完全离线跑。
+    // 必须放在建窗口之前，否则会闪一下窗口，也会抢单实例锁。
+    if (QCoreApplication::arguments().contains(QStringLiteral("--check-update"))) {
+        const int code = runHeadlessCheck();
+        qInfo() << "AppController: --check-update finished, code" << code;
+        // 不能直接 qApp->quit()：此刻 exec() 还没开始跑，Qt 会忽略这次退出请求，
+        // 进程就挂在那里等超时。排到事件循环的第一轮再退，并带上退出码给脚本用。
+        QTimer::singleShot(0, qApp, [code] { QCoreApplication::exit(code); });
+        return;
+    }
+
     m_settings = &Settings::instance();
     m_registry = new ToolRegistry(this);
     m_plugins = new PluginManager(m_registry, this);
@@ -37,6 +84,8 @@ void AppController::start(bool autostartLaunch)
 
     m_main = new MainWindow(m_registry, m_settings, m_plugins, m_apps);
     m_tray = new TrayController(this);
+    m_update = new UpdateChecker(this);
+    m_updateDialog = new UpdateDialog(m_update, m_settings, m_main);
 
     // ---- 接线：热键 / 托盘 -> 呼出窗口并聚焦搜索框
     connect(m_hotkey, &HotkeyManager::activated, this, [this] {
@@ -59,6 +108,61 @@ void AppController::start(bool autostartLaunch)
     connect(m_main, &MainWindow::hotkeyChanged, this, [this](const QKeySequence &seq) {
         registerHotkey(seq);
     });
+
+    // ---- 接线：更新
+    // 三处触发（设置页按钮 / 托盘菜单 / 启动静默）都收敛到 checkUpdate()，
+    // 只有它决定要不要把结果显示到界面上。
+    connect(m_main, &MainWindow::checkUpdateRequested, this, [this] { checkUpdate(true); });
+    connect(m_tray, &TrayController::checkUpdateRequested, this, [this] {
+        // 从托盘进来的用户看不到设置页，先把设置页翻出来再检查，结果才有地方显示
+        showMainWindow();
+        m_main->showSettings();
+        checkUpdate(true);
+    });
+    // 点「发现新版本」的气泡 -> 展开更新对话框（不再联网，用缓存下来的清单）
+    connect(m_tray, &TrayController::messageClicked, this, [this] {
+        if (m_hasPendingUpdate)
+            showUpdateDialog();
+    });
+
+    connect(m_update, &UpdateChecker::checking, this, [this] {
+        m_main->setUpdateChecking(true);
+    });
+
+    connect(m_update, &UpdateChecker::updateAvailable, this, [this](const update::Info &info) {
+        m_pendingUpdate = info;
+        m_hasPendingUpdate = true;
+        m_main->setUpdateChecking(false);
+        m_main->setUpdateStatus(QStringLiteral("发现新版本 %1").arg(info.version), true);
+
+        if (m_silentCheck) {
+            // 静默检查不抢焦点：只弹气泡，用户点了才展开对话框
+            m_tray->showMessage(QStringLiteral("发现新版本 %1").arg(info.version),
+                                QStringLiteral("点击查看更新说明并升级"),
+                                false);
+            qInfo() << "AppController: 发现新版本（静默提示）" << info.version;
+        } else {
+            showUpdateDialog();
+        }
+    });
+
+    connect(m_update, &UpdateChecker::upToDate, this, [this](const QString &version) {
+        m_main->setUpdateChecking(false);
+        if (!m_silentCheck)
+            m_main->setUpdateStatus(QStringLiteral("已是最新版本（%1）").arg(version), true);
+        qInfo() << "AppController: 已是最新版本" << version;
+    });
+
+    connect(m_update, &UpdateChecker::failed, this, [this](const QString &message) {
+        m_main->setUpdateChecking(false);
+        // 静默检查失败不打扰用户（可能是没网），只留日志
+        if (!m_silentCheck)
+            m_main->setUpdateStatus(message, false);
+        qWarning() << "AppController: 检查更新失败:" << message;
+    });
+
+    // 安装器已经跑起来：立刻退出，让安装器能覆盖 exe 与插件
+    connect(m_updateDialog, &UpdateDialog::installerLaunched, this, &AppController::quit);
 
     registerHotkey(m_settings->hotkey());
 
@@ -140,6 +244,9 @@ void AppController::start(bool autostartLaunch)
     // ---- 开机自启：静默驻留托盘
     if (autostartLaunch) {
         qInfo() << "AppController: started silently (autostart) with" << m_registry->count() << "tools";
+        // 自启时不弹窗，但仍然值得在后台看看有没有新版本（一次气泡比手动找发布页省事）
+        m_silentCheck = true;
+        m_update->scheduleStartupCheck();
         return;
     }
 
@@ -152,6 +259,10 @@ void AppController::start(bool autostartLaunch)
                             QStringLiteral("还没有加载到工具。把插件动态库放进 plugins 目录后重启即可。"),
                             true);
     }
+
+    // 延迟 3 秒、24 小时一次；失败只写日志，不影响启动
+    m_silentCheck = true;
+    m_update->scheduleStartupCheck();
 
     qInfo() << "AppController: started with" << m_registry->count() << "tools,"
             << m_plugins->errors().size() << "plugin errors,"
@@ -197,6 +308,30 @@ void AppController::quit()
     if (m_main)
         m_main->prepareQuit();
     qApp->quit();
+}
+
+void AppController::checkUpdate(bool fromUser)
+{
+    // 静默与手动的区别只体现在「结果怎么显示」（气泡 vs 设置页 + 对话框），
+    // 网络行为完全一致，所以这里只记一个标记。
+    m_silentCheck = !fromUser;
+    if (fromUser) {
+        m_main->setUpdateChecking(true);
+        qInfo() << "AppController: 手动检查更新";
+    }
+    m_update->check();
+}
+
+void AppController::showUpdateDialog()
+{
+    if (!m_hasPendingUpdate)
+        return;
+
+    // 弹窗前把主窗口收回到可见状态：对话框是 m_main 的子窗口，主窗口在托盘里时
+    // 只显示子窗口会让用户找不到它。
+    if (m_main && !m_main->isVisible())
+        showMainWindow();
+    m_updateDialog->showUpdate(m_pendingUpdate);
 }
 
 void AppController::restart()

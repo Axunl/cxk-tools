@@ -21,6 +21,9 @@ set(APP_SOURCES
     core/SingleInstance.h
     core/ToolRegistry.cpp
     core/ToolRegistry.h
+    core/UpdateChecker.cpp
+    core/UpdateChecker.h
+    core/UpdateInfo.h
     core/WindowGeometry.h
 
     ui/HomePage.cpp
@@ -33,11 +36,28 @@ set(APP_SOURCES
     ui/ToolWindow.h
     ui/TrayController.cpp
     ui/TrayController.h
+    ui/UpdateDialog.cpp
+    ui/UpdateDialog.h
 )
 
 set(APP_RESOURCES
     app/resources/resources.qrc
 )
+
+# ---------------------------------------------------------------------------
+# Windows 版本资源 + 程序图标。
+#
+# 模板里有两个必须在 configure 期填的东西：版本号（与 project() 同源）和图标路径。
+# 图标必须写绝对路径：rc 里的相对路径是相对 .rc 文件所在目录解析的，而配置文件
+# 生成在构建目录里，写相对路径会指到 build/src/assets/app.ico 这种不存在的位置。
+# 反斜杠要成对：rc 字符串里单个 \U 会被当成转义。
+# ---------------------------------------------------------------------------
+if(WIN32)
+    set(XTOOLS_ICON_RC "${PROJECT_SOURCE_DIR}/assets/app.ico")
+    string(REPLACE "/" "\\\\" XTOOLS_ICON_RC "${XTOOLS_ICON_RC}")
+    configure_file(app/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    list(APPEND APP_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
+endif()
 
 # Windows 用 WIN32 子系统，避免双击启动时弹一个黑控制台；
 # macOS / Linux 保持普通可执行文件（插件目录约定为「可执行文件同级/plugins」，三平台一致）。
@@ -109,3 +129,21 @@ if(WIN32 AND XTOOLS_DEPLOY_QT)
         message(WARNING "未找到 windeployqt，IDE 内运行可能需要手动把 Qt 的 bin 加入 PATH")
     endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# 打包布局（三平台统一）：
+#   cmake --install <build> --prefix <staging> 产出
+#     <staging>/cxk-tools(.exe)                主程序
+#     <staging>/plugins/<id>.(dll|dylib|so)    插件（规则写在 xtools_add_plugin 里）
+#
+# 为什么要有 install 规则而不是继续用 copy：发布流水线（脚本与 CI）需要一个
+# 与平台无关的 staging 入口，手工 copy 的通病是新增插件时忘记同步一条命令，
+# 装出来的包少一个工具却要到用户手里才发现。
+# BUNDLE DESTINATION 当前不生效（macOS 的 .app 由 installer/macos 脚本拼装，
+# CMake 侧刻意不开 MACOSX_BUNDLE 以保持三平台 bin 布局一致），保留是为了
+# 以后真切成 bundle 时不至于报错。
+# ---------------------------------------------------------------------------
+install(TARGETS cxk-tools
+    RUNTIME DESTINATION .
+    BUNDLE DESTINATION .
+)

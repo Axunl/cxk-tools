@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QKeySequence>
 #include <QObject>
 #include <QSettings>
@@ -49,6 +50,18 @@ public:
     /// 使用频次，参与搜索排序加成（见 ToolRegistry）。
     int usage(const QString &toolId) const;
     void bumpUsage(const QString &toolId);
+
+    /// 启动时自动检查更新（默认开）。关掉之后只有用户手点「检查更新」才联网。
+    bool autoCheckUpdate() const;
+    void setAutoCheckUpdate(bool on);
+
+    /// 上次成功检查更新的时间（UTC）。用于「24 小时内不重复联网」的节流。
+    QDateTime lastUpdateCheck() const;
+    void setLastUpdateCheck(const QDateTime &when);
+
+    /// 用户点过「稍后」的版本号：静默检查不再为它弹气泡（手动检查仍然提示）。
+    QString skippedVersion() const;
+    void setSkippedVersion(const QString &version);
 
     QString configFilePath() const;
     void sync();

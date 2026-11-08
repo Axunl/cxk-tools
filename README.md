@@ -15,6 +15,39 @@
 
 ![主窗口预览](docs/main-preview.png)
 
+## 下载与安装
+
+到 [Releases](https://github.com/Axunl/cxk-tools/releases) 下载最新版本：
+
+| 平台 | 下载 | 说明 |
+| --- | --- | --- |
+| Windows 10 / 11 | `cxk-tools-<版本>-windows-x64-setup.exe` | 安装版：开始菜单 + 可选桌面快捷方式、可卸载，支持应用内自动更新 |
+| Windows 10 / 11 | `cxk-tools-<版本>-windows-x64.zip` | 便携版：解压即用、不写注册表；升级是下载新包覆盖 |
+| macOS 12+（Apple Silicon） | `cxk-tools-<版本>-macos-arm64.dmg` | 打开后把 `cxk-tools.app` 拖进「应用程序」 |
+
+安装包**没有代码签名**，所以系统会先拦一下：
+
+- Windows：SmartScreen 提示「Windows 已保护你的电脑」→ 点「更多信息」→「仍要运行」；
+- macOS：首次打开被拦时右键（或按住 Control 点）图标 →「打开」，或执行
+  `xattr -dr com.apple.quarantine "/Applications/cxk-tools.app"`。
+
+Linux 暂无预编译包，按下面的「构建」自己编。卸载：Windows 在「设置 → 应用」里卸载
+（用户配置与自己装的插件会保留，想清干净再手动删 `%LOCALAPPDATA%\cxk\cxk-tools`）；
+macOS 把 `.app` 拖进废纸篓。
+
+## 自动更新
+
+设置页「更新」分组，或托盘菜单「检查更新」：
+
+- **怎么检查**：读 Releases 上的 `latest.json`（`releases/latest/download/` 这个地址，不打 GitHub API，
+  没有匿名限流），拿版本号跟当前程序比，有新的就弹出更新说明。
+- **自动检查**：默认开启，启动后延迟 3 秒查一次，**24 小时内不重复**；关掉后只有你手点按钮才联网。
+  检查失败只写日志（`logs/app.log` 里搜 `UpdateChecker`），不会弹窗打断。
+- **安装版**：下载 → 校验 SHA256 → 静默运行安装器 → 程序退出，安装器装完自动把新版本拉起来。
+- **便携版 / macOS**：只下载 zip 或 dmg 并打开，解压覆盖由你决定——便携版不该被偷偷装进 Program Files。
+- 下载的文件放在系统临时目录的 `cxk-tools-update/`，校验不通过会立刻删掉。
+- 不想被某个版本反复提醒就点「稍后」，该版本在之后的**静默**检查里不再提示（手点检查仍会提示）。
+
 ## 支持平台
 
 | 平台 | 状态 | 说明 |
@@ -63,6 +96,7 @@
 | Qt | 6.8.3 `msvc2022_64`（6.5+ 亦可） | 6.8+ `clang_64`（官方安装包） | 发行版包 `qt6-base-dev` |
 | 编译器 | MSVC 19.4x+（VS 2022 及以上） | Xcode Command Line Tools | GCC 9+ / Clang 10+ |
 | 构建工具 | CMake ≥ 3.21 + Ninja | 同左 | 同左（另需 `libx11-dev`、`libxcb1-dev`） |
+| 打安装包（可选，仅 Windows） | Inno Setup 6.7.x | — | — |
 | OCR 运行时（可选，非构建依赖） | 系统自带 OCR 引擎，无需安装 | `tesseract-ocr`（识别中文另装 `chi_sim` 语言包） | 同 macOS |
 
 ## 构建
@@ -90,6 +124,8 @@ cmake --build build
 build/bin/cxk-tools                 主程序（Windows 为 cxk-tools.exe）
 build/bin/plugins/calc              插件动态库（.dll / .dylib / .so）
 build/bin/plugins/ipquery
+build/bin/plugins/memmon
+build/bin/plugins/filelock
 build/bin/plugins/colorpicker
 build/bin/plugins/jsonfmt
 build/bin/plugins/translate
@@ -133,18 +169,61 @@ presets 里的 `CMAKE_PREFIX_PATH` 是本机 Qt 路径，换机器或换平台�
 启动 IDE —— 它会把启动终端的限制一起继承（例如受限账号下 `vcvarsall` 调不动 `reg.exe`，
 表现为「读不到 MSVC 环境 → cmake 找不到编译器 → 配置静默失败」）。
 
-## 打包成可分发目录
+## 打包与安装器
 
-Windows：
+三个平台都走同一个 staging 入口 `cmake --install`（可执行文件在根，插件在 `plugins/`），
+再把 Qt 运行时拼进去，所以新增插件不需要改打包脚本。
+
+Windows —— 便携 zip + 安装器：
 
 ```bat
-scripts\package.bat
+scripts\package.bat                          :: 构建 + 打包 + 出安装器
+scripts\package.bat Release --no-installer   :: 只出便携 zip（没装 Inno Setup 时用）
 ```
 
-得到 `dist\`：可执行文件 + windeployqt 拉齐的 Qt 运行时 + `plugins\`，整个目录拷走就能跑。
+产物：
 
-macOS 用 `macdeployqt` 拉齐运行库后打成 `.app`；Linux 把可执行文件与 `plugins/` 放同一目录，
-必要时用 `linuxdeploy` / `appimagetool` 打包，Qt 运行库按发行版方式分发。
+```
+dist\windows-x64\                              可直接运行的目录（Qt 运行时 + 插件）
+dist\cxk-tools-<版本>-windows-x64.zip          便携版，约 12 MB
+dist\cxk-tools-<版本>-windows-x64-setup.exe    Windows 安装器，约 10 MB
+```
+
+体积是刻意压出来的：`windeployqt` 关掉用不到的部分（DirectX 着色器编译器约 15 MB、
+软件 OpenGL 约 20 MB、Qt 翻译文件、SVG 相关组件），随后 `cmake/PruneQtRuntime.cmake`
+再删一遍多余后端并打印释放了多少字节；安装器用 LZMA2 固实压缩。VC++ 运行库以
+app-local DLL 形式随包分发（约 1 MB），不附 25 MB 的 `vc_redist.exe`。
+没有采用静态链接 Qt（与插件体系、LGPL 冲突）或 UPX（对 Qt 的 DLL 不稳定，且容易被杀软误报）。
+
+macOS：
+
+```sh
+scripts/build.sh Release
+scripts/package-macos.sh     # 拼 .app → macdeployqt → 剪裁 → ad-hoc 签名 → dist/*.dmg
+```
+
+Linux 没有预编译包：把可执行文件与 `plugins/` 放同一目录即可，Qt 运行库按发行版方式分发
+（需要时可用 `linuxdeploy` / `appimagetool` 进一步打包）。
+
+## 发布一个版本（维护者）
+
+1. 改 `CMakeLists.txt` 第 3 行的版本号并提交——这是版本号的**唯一来源**；
+2. 打 tag 并推送：
+
+   ```sh
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+3. `.github/workflows/release.yml` 会自动：校验 tag 与 `CMakeLists.txt` 的版本一致 →
+   三平台构建 → 产出 zip / setup.exe / dmg → 生成 `latest.json` 与 `SHA256SUMS.txt` →
+   创建 Release（说明取自上一版以来的提交）。
+
+tag 与源码里的版本不一致时工作流**直接失败**，不会替你把版本改掉。
+也可以在 Actions 页面手动触发 `Release` 并填要重跑的 tag（已有 release 会覆盖上传）。
+
+`latest.json` 是应用内更新的输入，字段与产物命名是契约，改之前先看
+[AGENTS.md](AGENTS.md) 的「发布与打包」一节。
 
 ## 增加新插件
 
@@ -308,6 +387,7 @@ TSV 近似，不是单元格识别）；识别质量取决于图片清晰度与�
 | `--tool <id>` | 启动后直接在主窗口里打开该工具（如 `--tool jsonfmt`） |
 | `--popout <id>` | 启动后直接以独立窗口打开该工具（如 `--popout calc`） |
 | `--search <关键词>` | 启动后停在首页并预填搜索（可用于搜本机应用） |
+| `--check-update` | 无界面跑一次更新检查后退出（结果写日志，`CHECK_UPDATE_RESULT=…`）；不受「已有实例在运行」影响，可用 `XTOOLS_UPDATE_FEED` 指向自定义清单地址 |
 | `--shot <路径>` | 调试用：把窗口渲染成 PNG 后退出（可配 `--settings` / `--tool` / `--popout` / `--search` 截不同页面） |
 
 ## 目录结构
@@ -315,9 +395,9 @@ TSV 近似，不是单元格识别）；识别质量取决于图片清晰度与�
 ```
 src/
   api/ITool.h        插件接口（宿主与插件共享的唯一头文件）
-  core/              配置、日志、单实例、热键、工具注册表、本机应用索引、插件加载、组装
-  ui/                主窗口、首页网格、独立工具窗口、设置页、托盘
-  app/main.cpp       入口 + 样式表资源
+  core/              配置、日志、单实例、热键、工具注册表、本机应用索引、插件加载、更新检查、组装
+  ui/                主窗口、首页网格、独立工具窗口、设置页、托盘、更新对话框
+  app/main.cpp       入口 + 样式表资源 + Windows 版本资源模板（app.rc.in）
 plugins/
   jsonfmt/           JSON 格式化
   calc/              计算器
@@ -333,8 +413,13 @@ plugins/
   regex/             正则表达式测试：匹配高亮 / 捕获组 / 常用表达式（离线）
   websocket/         WebSocket 调试：连 ws / wss，或在本机起 ws 服务端
   share/             共享：起本地 HTTP 服务，把文件与文本发布到局域网
-cmake/               xtools_add_plugin() 等构建辅助
-scripts/             build.bat / build.sh / package.bat
+assets/              程序图标（app.ico / app.icns，由 IconBadge 的画法导出）
+installer/
+  windows/           Inno Setup 脚本 + 中文语言文件
+  macos/             Info.plist 模板
+cmake/               xtools_add_plugin()、Qt 部署与运行时剪裁脚本
+scripts/             build.bat / build.sh / package.bat / package-macos.sh / gen-release-manifest.py
+.github/workflows/   ci.yml（三平台编译校验）/ release.yml（打 tag 发版）
 docs/PLUGIN.md       插件开发详解
 ```
 
@@ -346,6 +431,7 @@ docs/PLUGIN.md       插件开发详解
 | 日志 | `QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log` |
 | 插件 | 与可执行文件同级的 `plugins/`（macOS 在 `.app/Contents/MacOS/plugins`） |
 | 共享上传副本 | `QStandardPaths::AppLocalDataLocation` 下的 `share/uploads/`（Windows `%LOCALAPPDATA%\cxk\cxk-tools\share\uploads`）。网页端上传的文件存到这里并加入共享列表，从列表移除时连同副本一起删除 |
+| 更新下载的安装包 | 系统临时目录下的 `cxk-tools-update/`（校验失败会立刻删除，不长期保留） |
 | 开机自启 | Windows：`HKCU\...\Run`；Linux：`~/.config/autostart/cxk-tools.desktop`；macOS：未实现 |
 
 ## 平台差异
@@ -364,6 +450,8 @@ docs/PLUGIN.md       插件开发详解
 | OCR 文字识别 | 系统 `Windows.Media.Ocr`（离线，开箱可用，语言包随系统） | 需自行安装 `tesseract-ocr`；中文另装 `chi_sim` | 同 macOS；Wayland 不能抓屏，但仍可导入图片识别 |
 | WebSocket 调试（联网可选） | 支持，`wss` 的 TLS 走系统 Schannel；服务端模式监听本机端口，勾「允许局域网访问」时首次可能弹防火墙授权 | 支持，`wss` 依赖 Qt 的 TLS 后端（一般需 OpenSSL），未实机验证 | 同 macOS，未实机验证 |
 | 局域网共享（共享插件） | 支持，Qt 起本地 HTTP 服务并监听 IPv4 | 支持；首次运行时系统可能询问是否允许传入连接，需允许 | 支持；同样只监听 IPv4，防火墙需放行该端口 |
+| 安装包 | `setup.exe`（Inno Setup，未签名 → SmartScreen 提示） | `.dmg`（ad-hoc 签名、未公证 → 首次需右键打开） | 无预编译包 |
+| 应用内更新 | 安装版静默升级；便携版下载 zip 后自己覆盖 | 下载 dmg 后手动拖入「应用程序」 | 只提示打开发布页（没有可用的 Linux 包） |
 
 ## 已知边界
 
@@ -465,6 +553,16 @@ docs/PLUGIN.md       插件开发详解
   次数算差额；比较前会 trim 每行，所以行尾空格的差异不会被当成不同值
 - 「加引号」只是按行加工文本，不做转义：内容里本身带引号或分隔符时原样输出，
   拼进 SQL / 代码前请自行确认是否要转义
+- 安装包**没有代码签名**：Windows 会弹 SmartScreen（「更多信息 → 仍要运行」），
+  macOS 会被 Gatekeeper 拦下（右键「打开」或去掉 quarantine 属性）。签名要自己的证书，CI 里没做
+- 打 Windows 安装器需要 **Inno Setup 6.7.x**：`installer/windows/lang/ChineseSimplified.isl`
+  是 6.5.0+ 的翻译文件，换 7.x 编译会因消息表变动失败；没装则只能出便携 zip
+- 应用内更新只认 GitHub Releases 上的 `latest.json`：仓库改名、release 被删都会让检查失败
+  （只写日志，不影响使用）。自动检查会向 GitHub 发一次 HTTPS 请求（每天最多一次，可关）；
+  便携版不自动升级，只提示下载，安装版才做静默升级
+- macOS 只产出 Apple Silicon（arm64）包：Intel 机器上取不到对应资产时，提示会退化为打开发布页
+- Windows 包里删掉了 `tls/qopensslbackend.dll`，HTTPS 一律走系统 SChannel（Win10/11 足够）。
+  若将来要兼容更老的系统，在 `cmake/PruneQtRuntime.cmake` 里去掉那一行即可
 
 ## 后续可以加什么
 
@@ -473,3 +571,4 @@ docs/PLUGIN.md       插件开发详解
 - 深色主题跟随系统
 - 快捷键直达某个工具 / 收藏（固定到网格顶部）
 - macOS 全局热键与开机自启
+- 代码签名与公证（Windows Authenticode / macOS notarytool），消掉安装时的系统警告

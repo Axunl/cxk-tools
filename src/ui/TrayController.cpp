@@ -29,6 +29,10 @@ TrayController::TrayController(QObject *parent)
     auto *settingsAction = m_menu->addAction(QStringLiteral("设置"));
     connect(settingsAction, &QAction::triggered, this, &TrayController::settingsRequested);
 
+    // 更新检查放在设置下面：低频操作，但不能藏进设置页（用户找不到就等于没有）
+    auto *updateAction = m_menu->addAction(QStringLiteral("检查更新"));
+    connect(updateAction, &QAction::triggered, this, &TrayController::checkUpdateRequested);
+
     // 不做热重载，"重新扫描"实际是重启进程
     auto *restartAction = m_menu->addAction(QStringLiteral("重新扫描插件（重启）"));
     connect(restartAction, &QAction::triggered, this, &TrayController::restartRequested);
@@ -51,6 +55,10 @@ TrayController::TrayController(QObject *parent)
             break;
         }
     });
+
+    // 点气泡 = 对这条提示做点什么。目前只有「发现新版本」会用到：
+    // 由 AppController 接住后直接把更新对话框弹出来，用户点一下就能装。
+    connect(m_tray, &QSystemTrayIcon::messageClicked, this, &TrayController::messageClicked);
 
     m_tray->show();
 }

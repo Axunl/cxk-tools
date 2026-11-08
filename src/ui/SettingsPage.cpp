@@ -105,6 +105,7 @@ SettingsPage::SettingsPage(Settings *settings, PluginManager *plugins, QWidget *
 
     layout->addWidget(buildGeneralGroup());
     layout->addWidget(buildPluginGroup());
+    layout->addWidget(buildUpdateGroup());
     layout->addWidget(buildAboutGroup());
     layout->addStretch(1);
 }
@@ -205,6 +206,82 @@ QWidget *SettingsPage::buildPluginGroup()
     layout->addWidget(tip);
 
     return group;
+}
+
+QWidget *SettingsPage::buildUpdateGroup()
+{
+    auto *group = new QGroupBox(QStringLiteral("更新"), this);
+    auto *layout = new QVBoxLayout(group);
+    layout->setContentsMargins(16, 18, 16, 16);
+    layout->setSpacing(10);
+
+    auto *row = new QHBoxLayout;
+    row->setAlignment(Qt::AlignVCenter);
+
+    auto *current = new QLabel(QStringLiteral("当前版本 %1").arg(QApplication::applicationVersion()), group);
+    current->setStyleSheet(QStringLiteral("color:#475569;font-size:12px;"));
+    // 显式垂直居中：行高由右侧按钮撑起来，不写这一句文字会贴在行顶
+    current->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+    m_updateButton = new QPushButton(QStringLiteral("检查更新"), group);
+    m_updateButton->setProperty("accent", true);
+
+    row->addWidget(current);
+    row->addStretch(1);
+    row->addWidget(m_updateButton);
+    layout->addLayout(row);
+
+    m_autoCheck = new QCheckBox(QStringLiteral("启动时自动检查更新（每天最多一次）"), group);
+    m_autoCheck->setChecked(m_settings ? m_settings->autoCheckUpdate() : true);
+    layout->addWidget(m_autoCheck);
+
+    m_updateStatus = new QLabel(group);
+    m_updateStatus->setWordWrap(true);
+    m_updateStatus->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    // 没有状态就别占一行：空 QLabel 会在勾选框和提示之间留出一道莫名其妙的空隙
+    m_updateStatus->hide();
+    layout->addWidget(m_updateStatus);
+
+    auto *tip = new QLabel(
+        QStringLiteral("更新包来自 GitHub Releases。安装版下载后会自动静默升级；"
+                       "便携版只下载压缩包，解压覆盖由你决定。"),
+        group);
+    tip->setWordWrap(true);
+    tip->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    layout->addWidget(tip);
+
+    // 立刻置灰而不是等信号回来：用户连点两下会压出两个请求，
+    // 后到的结果还可能覆盖先到的（例如"已是最新"盖掉"发现新版本"）。
+    connect(m_updateButton, &QPushButton::clicked, this, [this] {
+        m_updateButton->setEnabled(false);
+        setUpdateStatus(QStringLiteral("正在检查更新…"), true);
+        emit checkUpdateRequested();
+    });
+    connect(m_autoCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_settings)
+            m_settings->setAutoCheckUpdate(on);
+    });
+
+    return group;
+}
+
+void SettingsPage::setUpdateStatus(const QString &text, bool ok)
+{
+    m_updateButton->setEnabled(true);
+    m_updateStatus->setText(text);
+    m_updateStatus->setStyleSheet(ok ? QStringLiteral("color:#10B981;font-size:12px;")
+                                     : QStringLiteral("color:#DC2626;font-size:12px;"));
+    m_updateStatus->setVisible(!text.isEmpty());
+}
+
+void SettingsPage::setUpdateChecking(bool checking)
+{
+    m_updateButton->setEnabled(!checking);
+    if (checking) {
+        m_updateStatus->setText(QStringLiteral("正在检查更新…"));
+        m_updateStatus->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+        m_updateStatus->show();
+    }
 }
 
 QWidget *SettingsPage::buildAboutGroup()

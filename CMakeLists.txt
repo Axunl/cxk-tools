@@ -3,6 +3,22 @@ cmake_minimum_required(VERSION 3.21)
 project(cxk-tools VERSION 0.1.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
+# 版本号的单一来源就是上面这一行 project()。这里额外做两件事：
+#
+# 1) 把版本落盘成 build/xtools-version.txt。scripts/*.bat 与 CI 都读这个文件，
+#    而不是去 grep CMakeLists —— 批处理解析源码格式是最容易随排版变化失效的写法，
+#    而 .bat 又必须保持纯 ASCII，没法写复杂的解析逻辑。
+# 2) Windows 需要 .rc 资源脚本（版本信息 + 图标）。CMake 不会因为源列表里
+#    出现 .rc 就自动启用 RC 语言，必须显式 enable，否则 configure 阶段就报
+#    「no RC compiler」。
+# ---------------------------------------------------------------------------
+file(WRITE "${CMAKE_BINARY_DIR}/xtools-version.txt" "${PROJECT_VERSION}\n")
+
+if(WIN32)
+    enable_language(RC)
+endif()
+
+# ---------------------------------------------------------------------------
 # 全局编译约定
 #
 # C++17 是硬要求：代码里用了 std::as_const / 内联命名空间之外的若干 C++17 设施。

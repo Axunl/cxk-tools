@@ -1,0 +1,44 @@
+// Windows 可执行文件的版本资源与图标（由 src/CMakeLists.txt 配置生成）。
+//
+// 编码约定：本文件只写 ASCII。rc.exe 按系统代码页解析源文件，
+// 一旦塞进中文字面量，在非中文 Windows 上会变成乱码；产品的中文名交给
+// 安装器（Inno Setup）与界面文案，这里保持英文。
+//
+// 版本号来自 @PROJECT_VERSION@，与 CMakeLists 的 project() 同源；
+// 资源管理器「属性 → 详细信息」里看到的文件版本就是它。
+
+#include <windows.h>
+
+IDI_APPICON ICON "@XTOOLS_ICON_RC@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "cxk"
+            VALUE "FileDescription", "CXK Tools"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "cxk-tools"
+            VALUE "OriginalFilename", "cxk-tools.exe"
+            VALUE "ProductName", "CXK Tools"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

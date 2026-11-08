@@ -65,4 +65,13 @@ function(xtools_add_plugin target)
     # 用全局属性收集而不是在函数里直接 add_dependencies：与 add_subdirectory
     # 顺序无关，新增插件只要照常调用 xtools_add_plugin()，无需改别处。
     set_property(GLOBAL APPEND PROPERTY XTOOLS_PLUGIN_TARGETS ${target})
+
+    # 打包布局：cmake --install 的 staging 里插件必须落在 <根>/plugins/，
+    # 与 build/bin 的结构一致 —— 宿主的 PluginManager 只认「可执行文件同级/plugins」。
+    # 放在这个函数里而不是每个插件的 CMakeLists，是为了新增工具时不会漏装。
+    # MODULE 库在 Windows 属于 RUNTIME、在 macOS/Linux 属于 LIBRARY，两个都要给。
+    install(TARGETS ${target}
+        RUNTIME DESTINATION plugins
+        LIBRARY DESTINATION plugins
+    )
 endfunction()

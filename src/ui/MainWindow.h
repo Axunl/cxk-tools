@@ -69,9 +69,15 @@ public:
     /// 设置页的热键状态回显（"已生效" / 失败原因）。
     void setHotkeyStatus(const QString &text, bool ok);
 
+    /// 设置页「更新」分组的状态回显与检查中状态（转发给 SettingsPage）。
+    void setUpdateStatus(const QString &text, bool ok);
+    void setUpdateChecking(bool checking);
+
 signals:
     void restartRequested();
     void hotkeyChanged(const QKeySequence &seq);
+    /// 设置页点了「检查更新」：真正的联网与弹窗都在 AppController，界面层不自己发请求。
+    void checkUpdateRequested();
 
 protected:
     void closeEvent(QCloseEvent *event) override;

@@ -7,6 +7,8 @@
 // 的创建顺序与信号连接只在这一个文件里，排查"谁调用了谁"时不用满仓库找。
 // ---------------------------------------------------------------------------
 
+#include "UpdateInfo.h"
+
 #include <QKeySequence>
 #include <QObject>
 #include <QString>
@@ -18,6 +20,8 @@ class LocalAppIndex;
 class HotkeyManager;
 class MainWindow;
 class TrayController;
+class UpdateChecker;
+class UpdateDialog;
 
 class AppController : public QObject
 {
@@ -39,6 +43,13 @@ private:
     void quit();
     void restart();
 
+    /// 无界面地跑一次更新检查，结果写日志后返回（--check-update）。
+    /// 返回 0=有新版本 1=已是最新 2=失败，仅用于日志可读性。
+    int runHeadlessCheck();
+    /// fromUser=true 时把过程与结果回显到设置页；false 时只留日志与托盘气泡。
+    void checkUpdate(bool fromUser);
+    void showUpdateDialog();
+
     Settings *m_settings = nullptr;
     ToolRegistry *m_registry = nullptr;
     PluginManager *m_plugins = nullptr;
@@ -46,4 +57,12 @@ private:
     HotkeyManager *m_hotkey = nullptr;
     MainWindow *m_main = nullptr;
     TrayController *m_tray = nullptr;
+    UpdateChecker *m_update = nullptr;
+    UpdateDialog *m_updateDialog = nullptr;
+
+    /// 静默检查发现的新版本：点托盘气泡时用它弹窗，避免再联网一次。
+    update::Info m_pendingUpdate;
+    bool m_hasPendingUpdate = false;
+    /// 当前这次检查是不是静默触发的（决定「发现新版本」时弹窗还是只弹气泡）。
+    bool m_silentCheck = false;
 };
