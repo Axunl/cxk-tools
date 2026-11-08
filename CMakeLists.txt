@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.21)
 
+# macOS 最低支持版本。README「下载与安装」与 installer/macos/Info.plist.in 的
+# LSMinimumSystemVersion 都写的是 12.0，但 CMake **不会**自动把两者同步：
+# 不设这个变量时，Apple clang 按「构建机所在系统」当部署目标，于是在 macos-15 /
+# macos-26 runner 上产出的 .app 会变成要求 macOS 15+ / 26+，用户双击直接
+# 「应用程序无法打开」。Qt 6.8 官方二进制本身的最低部署目标也是 12.0。
+# 必须在 project() 之前设置；调用方用 -DCMAKE_OSX_DEPLOYMENT_TARGET=... 可覆盖。
+#
+# 这里用 CMAKE_HOST_APPLE 而不是 APPLE：APPLE 由 CMAKE_SYSTEM_NAME 派生，而后者在
+# 第一次 project()/enable_language() 时才确定，写在 project() 前面可能还是未定义，
+# 条件不成立就会静默跳过（症状依旧是「设了但没生效」，最难查）。主机平台一开始就有。
+if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+endif()
+
 project(cxk-tools VERSION 0.1.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------

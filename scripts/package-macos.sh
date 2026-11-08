@@ -54,6 +54,24 @@ echo "[step] Info.plist + icon"
 sed "s/@VERSION@/$VERSION/g" "$ROOT/installer/macos/Info.plist.in" > "$APP/Contents/Info.plist"
 cp "$ROOT/assets/app.icns" "$APP/Contents/Resources/app.icns"
 
+# 部署目标一致性检查（只告警不中断）。
+# 二进制里的 minos 来自 CMAKE_OSX_DEPLOYMENT_TARGET（见根 CMakeLists.txt），
+# Info.plist 里的 LSMinimumSystemVersion 是另一份手写的值 —— 两者不一致时
+# 表现是「在旧系统上双击毫无反应」，非常难查，所以每次都打出来。
+echo "[step] deployment target"
+EXE="$APP/Contents/MacOS/cxk-tools"
+MINOS="$(otool -l "$EXE" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
+if [[ -z "$MINOS" ]]; then
+    # 老链接器只写 LC_VERSION_MIN_MACOSX
+    MINOS="$(otool -l "$EXE" 2>/dev/null | awk '/LC_VERSION_MIN_MACOSX/{f=1} f&&/version/{print $2; exit}')"
+fi
+PLIST_MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+echo "MINOS=${MINOS:-unknown}  PLIST_MIN=${PLIST_MIN:-unknown}"
+if [[ -n "$MINOS" && -n "$PLIST_MIN" && "$MINOS" != "$PLIST_MIN" ]]; then
+    echo "[warn] 可执行文件的 minos 与 Info.plist 的 LSMinimumSystemVersion 不一致：" \
+         "实际 ${MINOS}，声明 ${PLIST_MIN}（检查根 CMakeLists.txt 的 CMAKE_OSX_DEPLOYMENT_TARGET）" >&2
+fi
+
 # macdeployqt 只自动处理主程序；插件是我们自己的动态库，必须用 -executable=
 # 逐个告诉它，否则插件里的 Qt framework 路径不会被改写，运行时找不到 QtCore。
 echo "[step] macdeployqt"

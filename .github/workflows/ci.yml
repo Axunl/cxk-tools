@@ -25,7 +25,12 @@ jobs:
             os: windows-2022
             qt_arch: win64_msvc2022_64
           - name: macos
-            os: macos-14
+            # 必须用 macos-15 / macos-26（两者都是 arm64）。macos-14 镜像已于 2026-11-02
+            # 从 GitHub Actions 下线：标签还在，但任务分配不到机器，报
+            # "The configuration 'macos-14-arm64-us-default' is not supported"，
+            # 表现为 job 一步都没跑就被 cancelled。
+            # 固定 15 而不是 macos-latest：latest 现在是 macOS 26，Qt 6.8.3 配 Xcode 26 未验证。
+            os: macos-15
             qt_arch: clang_64
           - name: linux
             os: ubuntu-22.04

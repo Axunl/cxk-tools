@@ -34,6 +34,10 @@
     <string>@VERSION@</string>
     <key>CFBundleVersion</key>
     <string>@VERSION@</string>
+    <!-- 必须与根 CMakeLists.txt 的 CMAKE_OSX_DEPLOYMENT_TARGET 一致（都是 12.0）。
+         改一个就要改另一个：不设部署目标时二进制会按构建机的系统版本走，
+         于是这里的声明就成了谎话，旧系统上双击直接没反应。
+         scripts/package-macos.sh 会打印两者实际值并在不一致时告警。 -->
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>

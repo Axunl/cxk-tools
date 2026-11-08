@@ -133,8 +133,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-14 是 Apple Silicon；Intel 包首轮先不做（清单里缺该平台时客户端会退化到打开发布页）
-          - os: macos-14
+          # macos-15 是 Apple Silicon（arm64）；macos-14 已于 2026-11-02 下线，
+          # 用它会分配不到机器（configuration not supported）。
+          # Intel 包首轮先不做（清单里缺该平台时客户端会退化到打开发布页）
+          - os: macos-15
             arch: arm64
     steps:
       - uses: actions/checkout@v4

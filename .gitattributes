@@ -1,0 +1,11 @@
+# 行尾策略：两类脚本的要求正好相反，不写死就会踩坑。
+#
+# 1) 批处理必须 CRLF：cmd.exe 在 LF 结尾的 .bat 里 goto/label 会失效
+#    （症状是跳转不到子程序，脚本静默跑偏）。CI 的 Windows runner 若按 LF 检出，
+#    package.bat 会莫名其妙地不按流程走。
+# 2) shell 脚本必须 LF：CRLF 会让 bash 报 `$'\r': command not found`。
+#
+# 只钉这两类，其余文件沿用 git 的自动判断，避免整仓重新规范化带来无意义的 diff。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf

@@ -315,6 +315,18 @@ scripts/package-macos.sh       # macOS：构建 -> cxk-tools.app -> strip/codesi
 `xtools_add_plugin()` 里（新增插件自动带上，不需要改打包脚本）。所以新增源文件/资源时若忘了加
 install 规则，症状是「本机能跑、装完找不到插件」。
 
+### macOS：部署目标必须显式设
+
+- 根 `CMakeLists.txt` 在 `project()` **之前**设 `CMAKE_OSX_DEPLOYMENT_TARGET=12.0`，与
+  `installer/macos/Info.plist.in` 的 `LSMinimumSystemVersion` 对齐。不设的话 Apple clang 按
+  「构建机所在系统」当部署目标：在 `macos-15` runner 上产出的包要求 macOS 15+，用户在
+  macOS 12/13 上双击「毫无反应」，而 Info.plist 还写着 12.0 —— 声明与实际不符最难查。
+  变量必须在 `project()` 前设，之后设只对后续 target 生效（本项目等于没生效）；
+  且条件要用 `CMAKE_HOST_APPLE` 而不是 `APPLE` —— `APPLE` 派生自 `CMAKE_SYSTEM_NAME`，
+  在 `project()` 之前可能还没定义，写成 `if(APPLE)` 会静默跳过。
+- `scripts/package-macos.sh` 会打印 `MINOS=` 与 `PLIST_MIN=`，不一致就告警（不中断）。
+  看到这条 warn 先查上面两处是否被改歪，别去怀疑 `codesign`。
+
 ### 产物命名契约（更新器依赖它）
 
 ```
@@ -442,7 +454,13 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 | `.github/workflows/release.yml` | 推 `v*` tag，或手动 `workflow_dispatch` | 校验版本 → 三平台打包 → 生成清单 → `gh release create` |
 
 - `ci.yml` 的 Linux 任务要装 `libx11-dev libxcb1-dev libgl1-mesa-dev`（热键走 X11），
-  Windows 任务用 `ilammy/msvc-dev-cmd` 进 MSVC 环境，macOS 用 `macos-14`（arm64 runner）。
+  Windows 任务用 `ilammy/msvc-dev-cmd` 进 MSVC 环境，macOS 用 `macos-15`（arm64 runner）。
+- **macOS runner 标签会随镜像下线而失效**：`macos-14` 已于 2026-11-02 从 GitHub Actions 全面退役，
+  标签还在但分配不到机器，报 `The configuration 'macos-14-arm64-us-default' is not supported`，
+  job 一步都不跑就 cancelled（annotations 里只有这一行，日志是空的）。
+  升级前先看 `actions/runner-images` 的 Available Images 表：目前 arm64 是
+  `macos-15` / `macos-26`（`macos-latest` 现在等于 macOS 26），x64 要写 `macos-15-intel` /
+  `macos-26-intel`。**别用 `-latest`**：Qt 6.8.3 配新 SDK 没有验证过，会莫名其妙地编不过或打不开。
 - `release.yml` 里 Inno Setup 直接下官方 release 的 6.7.4，装到 `%RUNNER_TEMP%\InnoSetup6`
   （路径确定），随后把 `ISCC=<绝对路径>` 写进 `GITHUB_ENV`；找不到 `ISCC.exe` 就让这一步失败。
   **不要**改回「顺手装个最新版」：7.x 的消息表与 `lang\ChineseSimplified.isl` 不兼容。
@@ -1084,6 +1102,8 @@ add_subdirectory(plugins/mytool)
 | CI 上安装器步骤莫名失败、日志只有一行 err | 没有把「必须有安装器」变成硬约束 | CI 里设 `XTOOLS_REQUIRE_INSTALLER=1`，`package.bat` 缺 ISCC 即 `PACKAGE_FAILED` |
 | Linux 编译报 `cannot call member function 'QGuiApplication::nativeInterface()' without object` | `nativeInterface<T>()` 是**成员**函数（模板成员），写成 `QGuiApplication::nativeInterface<T>()` 看着像静态调用；MSVC 与 clang 对这类写法更宽松，只有 GCC 会在 CI 上把它拦下来 | 用 `qGuiApp->nativeInterface<T>()`（或 `qobject_cast<QGuiApplication *>(qApp)`）。别用 `QGuiApplication::instance()`：静态类型是 `QCoreApplication*`，拿不到这个模板成员 |
 | 只改了 Linux 分支，本机（Windows）却「编过」了 | 平台分支在另外两个平台上根本不参与编译，本机通过不代表 CI 通过 | 改 `#if defined(Q_OS_LINUX)` 里的代码，交付说明必须写「本机无法验证，等 CI 首次运行」；沙箱禁 WSL/Docker 时没有本地替代方案 |
+| `build (macos)` 一步都没跑就 cancelled，annotation 只有 `The configuration 'macos-14-arm64-us-default' is not supported`，日志是空的 | `macos-14` 镜像已于 2026-11-02 从 GitHub Actions 退役：标签还在，但没有机器 | 换 `macos-15`（arm64）。看 `actions/runner-images` 的 Available Images 表确认当前标签，**别用 `-latest`** |
+| macOS 包在用户的旧系统上双击没反应，`Info.plist` 却写着 12.0 | 没设 `CMAKE_OSX_DEPLOYMENT_TARGET`，clang 按构建机系统版本当部署目标（runner 是 15/26 就要求 15/26） | 在 `project()` **之前**设 `CMAKE_OSX_DEPLOYMENT_TARGET`；`package-macos.sh` 会打印 `MINOS=`/`PLIST_MIN=` 并在不一致时告警 |
 
 ---
 
