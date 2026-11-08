@@ -74,25 +74,41 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       # 固定 6.7.4：installer/windows/lang/ChineseSimplified.isl 是 6.5.0+ 的翻译，
-      # 用 7.x 编译会因消息表变动失败。先试官方 release，失败再退回 choco。
+      # 用 7.x 编译会因消息表变动失败。
+      # 装到 RUNNER_TEMP 下的固定目录，这样 ISCC 的路径是确定的、不用猜安装位置；
+      # 找不到就直接这一步失败 —— 不能等到打包脚本里才发现没有安装器。
       - name: Install Inno Setup 6.7.4
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'InnoSetup6'
           $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe'
           $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
-          try {
-            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
-            Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER' -Wait
-          } catch {
-            Write-Host "direct download failed, falling back to chocolatey: $_"
-            choco install innosetup -y --no-progress
+          Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+          Start-Process -FilePath $exe -Wait -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=$dir"
+          )
+          $iscc = Join-Path $dir 'ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            # 自定义 /DIR 没生效时再退回到几个常见位置找一遍
+            $iscc = @(
+              (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+              (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+              (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
-          if (Get-Command iscc -ErrorAction SilentlyContinue) { Write-Host "ISCC on PATH" }
-          else { Get-ChildItem 'C:\Program Files (x86)\Inno Setup*','C:\Program Files\Inno Setup*',"$env:LOCALAPPDATA\Programs\Inno Setup*" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "found: $_" } }
+          if (-not $iscc) {
+            throw 'ISCC.exe not found after installing Inno Setup 6.7.4'
+          }
+          Write-Host "ISCC=$iscc"
+          # package.bat 会优先用这个环境变量，避免再去猜路径
+          "ISCC=$iscc" >> $env:GITHUB_ENV
 
       - name: Build and package
         shell: cmd
+        env:
+          # 强制要求出安装器：ISCC 缺失时让本步骤失败，而不是发一个没有 setup.exe 的版本
+          XTOOLS_REQUIRE_INSTALLER: "1"
         run: scripts\package.bat
 
       - name: Collect artifacts

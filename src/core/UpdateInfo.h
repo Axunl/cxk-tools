@@ -183,4 +183,26 @@ inline const Asset *pickAsset(const Info &info, const QString &preferredKind)
     return fallback;
 }
 
+/// 判断某个可执行文件所在目录是不是「按当前用户安装」的位置（Windows 专用判断）。
+///
+/// 为什么需要：Inno 的 PrivilegesRequired=admin 会让静默升级去提权，而按用户安装的副本
+/// 本来就不需要提权；一旦用户在 UAC 上点了「否」，/SILENT 的升级会**静默地什么都不做**，
+/// 界面只能看到「安装包启动了、版本没变」。所以升级前要先认出安装范围，按用户装就补
+/// /CURRENTUSER。
+///
+/// 参数都用正斜杠（调用方先做 QDir::fromNativeSeparators）。比较时必须带上分隔符，
+/// 否则 `C:\Users\a\AppData\LocalBackup\x` 会被误判成在 `...\AppData\Local` 下。
+inline bool isPerUserInstallDir(const QString &exeDir, const QString &localAppData)
+{
+    if (exeDir.isEmpty() || localAppData.isEmpty())
+        return false;
+
+    QString root = localAppData;
+    if (!root.endsWith(QLatin1Char('/')))
+        root += QLatin1Char('/');
+
+    const QString dir = exeDir.endsWith(QLatin1Char('/')) ? exeDir : exeDir + QLatin1Char('/');
+    return dir.startsWith(root, Qt::CaseInsensitive);
+}
+
 } // namespace update

@@ -181,6 +181,10 @@ scripts\package.bat                          :: 构建 + 打包 + 出安装器
 scripts\package.bat Release --no-installer   :: 只出便携 zip（没装 Inno Setup 时用）
 ```
 
+安装器需要本机有 [Inno Setup 6](https://jrsoftware.org/isdl.php)：脚本会依次在 `PATH`、常见的
+安装目录里找 `ISCC.exe`，也可以用环境变量 `ISCC` 直接指定路径。**找不到时只出 zip 并给一行警告**，
+不会中断打包；CI 上则会设 `XTOOLS_REQUIRE_INSTALLER=1` 强制要求出安装器。
+
 产物：
 
 ```
@@ -555,8 +559,11 @@ docs/PLUGIN.md       插件开发详解
   拼进 SQL / 代码前请自行确认是否要转义
 - 安装包**没有代码签名**：Windows 会弹 SmartScreen（「更多信息 → 仍要运行」），
   macOS 会被 Gatekeeper 拦下（右键「打开」或去掉 quarantine 属性）。签名要自己的证书，CI 里没做
-- 打 Windows 安装器需要 **Inno Setup 6.7.x**：`installer/windows/lang/ChineseSimplified.isl`
-  是 6.5.0+ 的翻译文件，换 7.x 编译会因消息表变动失败；没装则只能出便携 zip
+- 打 Windows 安装器需要 **Inno Setup 6.7.x**（已在 6.7.4 上实测编译通过）：
+  `installer/windows/lang/ChineseSimplified.isl` 是 6.5.0+ 的翻译文件，换 7.x 编译会因消息表变动失败；
+  没装则只能出便携 zip
+- 装到「当前用户目录」的副本升级时不弹 UAC，装到 `Program Files` 的需要管理员权限（会弹 UAC，
+  拒绝则升级不生效，重新打开「检查更新」再来一次即可）
 - 应用内更新只认 GitHub Releases 上的 `latest.json`：仓库改名、release 被删都会让检查失败
   （只写日志，不影响使用）。自动检查会向 GitHub 发一次 HTTPS 请求（每天最多一次，可关）；
   便携版不自动升级，只提示下载，安装版才做静默升级

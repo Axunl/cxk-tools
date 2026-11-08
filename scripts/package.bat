@@ -165,36 +165,79 @@ if errorlevel 1 goto fail
 
 rem ---- portable zip -----------------------------------------------------------
 set "ZIP=%ROOT%\dist\cxk-tools-%VERSION%-windows-x64.zip"
+set "SETUP=%ROOT%\dist\cxk-tools-%VERSION%-windows-x64-setup.exe"
+rem Delete this run's outputs first: if the installer step is skipped, a stale
+rem setup.exe from a previous run would make "skipped" look like "succeeded"
+rem and would also poison the size report below.
 if exist "%ZIP%" del /q "%ZIP%"
+if exist "%SETUP%" del /q "%SETUP%"
 echo [step] zip
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference='Stop'; Compress-Archive -Path '%ROOT%\%STAGE%\*' -DestinationPath '%ZIP%' -CompressionLevel Optimal -Force"
 if errorlevel 1 goto fail
 
 rem ---- Inno Setup installer ---------------------------------------------------
-if "%MAKE_INSTALLER%"=="1" (
-    set "ISCC="
-    for /f "delims=" %%i in ('where iscc 2^>nul') do if not defined ISCC set "ISCC=%%i"
-    if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
-    if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
-    if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
-    if defined ISCC (
-        echo [step] Inno Setup
-        "%ISCC%" /DAppVersion=%VERSION% installer\windows\cxk-tools.iss
-        if errorlevel 1 goto fail
-    ) else (
-        echo [warn] ISCC.exe not found - installer skipped, portable zip only
-    )
-)
+rem KEEP EVERYTHING BELOW AT TOP LEVEL. Two cmd traps broke the first CI run
+rem (both reproduced locally, see AGENTS.md troubleshooting table):
+rem   1) %VAR% is expanded when the whole if-block is parsed, so "set then use
+rem      in the same block" yields the stale/empty value -> '""' is not recognized;
+rem   2) %ProgramFiles(x86)% contains ')' which closes the block early, and the
+rem      leftover text runs as a command -> "'C:\Program' is not recognized".
+rem Hence: labels + goto, and the search lives in a call-ed subroutine.
+if "%MAKE_INSTALLER%"=="0" goto skip_installer
+call :find_iscc
+if not defined ISCC goto no_iscc
+echo [step] Inno Setup: %ISCC%
+"%ISCC%" /DAppVersion=%VERSION% installer\windows\cxk-tools.iss
+if errorlevel 1 goto fail
+goto skip_installer
 
+:no_iscc
+rem CI must ship an installer, so release.yml exports XTOOLS_REQUIRE_INSTALLER=1
+rem and a missing ISCC fails the build instead of silently publishing a release
+rem without setup.exe. Locally the same situation is only a warning.
+if defined XTOOLS_REQUIRE_INSTALLER goto require_iscc
+echo [warn] ISCC.exe not found - installer skipped, portable zip only
+echo        install Inno Setup 6 (https://jrsoftware.org/isdl.php) or set ISCC=...
+goto skip_installer
+
+:require_iscc
+echo [error] ISCC.exe not found but XTOOLS_REQUIRE_INSTALLER is set
+echo         install Inno Setup 6 (https://jrsoftware.org/isdl.php) or set ISCC=...
+goto fail
+
+:skip_installer
 rem ---- report -----------------------------------------------------------------
 echo.
 powershell -NoProfile -Command ^
     "$s=(Get-ChildItem -Recurse -File '%ROOT%\%STAGE%' | Measure-Object -Sum Length).Sum; Write-Host ('STAGE_BYTES=' + $s + '  (' + [math]::Round($s/1MB,1) + ' MB)')"
 for %%z in ("%ZIP%") do echo ZIP_BYTES=%%~zz
+if exist "%SETUP%" for %%s in ("%SETUP%") do echo SETUP_BYTES=%%~zs
 echo.
 echo PACKAGE_OK  --^>  %ROOT%\dist
 popd
+exit /b 0
+
+rem ---- helpers ----------------------------------------------------------------
+rem Locate ISCC.exe: env ISCC -> PATH -> per-user install -> machine-wide install.
+rem A subroutine (not an if-block) for the reasons listed at the Inno section.
+:find_iscc
+rem Explorer's "Copy as path" hands out a quoted string; strip quotes so the
+rem call below can wrap it safely (a quoted value would become ""C:\..."" ).
+if defined ISCC set "ISCC=%ISCC:"=%"
+if defined ISCC exit /b 0
+for /f "delims=" %%i in ('where iscc 2^>nul') do if not defined ISCC set "ISCC=%%i"
+if defined ISCC exit /b 0
+if not defined LOCALAPPDATA goto :find_iscc_pf
+if not exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" goto :find_iscc_pf
+set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+exit /b 0
+:find_iscc_pf
+if not exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" goto :find_iscc_pf64
+set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+exit /b 0
+:find_iscc_pf64
+if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 exit /b 0
 
 :fail

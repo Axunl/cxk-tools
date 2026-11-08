@@ -371,9 +371,20 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 
 - 编译要传版本：`ISCC.exe /DAppVersion=0.2.0 installer\windows\cxk-tools.iss`（忘了传，脚本里
   `#ifndef AppVersion` 会直接 `#error`，不会静默产出 0.0.0 的安装包）。
+- **ISCC 的定位顺序**（`package.bat` 的 `:find_iscc` 子程序）：环境变量 `ISCC` → `PATH` →
+  `%LOCALAPPDATA%\Programs\Inno Setup 6` → `%ProgramFiles(x86)%\Inno Setup 6` →
+  `%ProgramFiles%\Inno Setup 6`。CI 里 Inno 装到 `%RUNNER_TEMP%\InnoSetup6` 并把绝对路径写进
+  `ISCC`，所以 CI 不依赖任何猜测。
+- **找不到 ISCC 时的行为由 `XTOOLS_REQUIRE_INSTALLER` 决定**：CI 设成 `1`（缺了就
+  `PACKAGE_FAILED`，绝不允许发出一个没有 setup.exe 的 release）；本地不设，只
+  `[warn] ... portable zip only` 继续出 zip。
+- **定位与调用必须写在标签子程序 / 顶层的 `goto` 流程里**，不能塞进 `if (...)` 块：
+  ① `%VAR%` 在整块解析时就展开，块内 `set` 的值当轮读不到，命令会变成 `""` 去执行；
+  ② `%ProgramFiles(x86)%` 里的 `)` 会提前闭合块，剩下的文本被当命令跑（实测报
+  `'C:\Program' is not recognized`）。这两条是第一次 CI 发版失败的真正原因。
 - `AppId` 是**固定 GUID**，覆盖升级靠它；换掉会让新版本装成第二个程序、控制面板里出现两条。
 - 压缩 `lzma2/ultra64` + `SolidCompression=yes` + `LZMAUseSeparateProcess=yes`（后者防止 Inno 的
-  压缩线程在 CI 上吃满内存失败）。
+  压缩线程在 CI 上吃满内存失败）。实测 28 MB 的 staging 压出 **10.1 MB** 的 setup.exe。
 - **不做** `[UninstallDelete]`：用户配置（`cxk-tools.ini`、`logs/`）不随卸载删除，重装后设置还在。
 - 应用内更新调用安装器的参数是固定的：
 
@@ -384,6 +395,11 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
   `[Run]` 里刻意**不加** `skipifsilent`，这样静默升级结束后新版本会自动被拉起。
   `CLOSEAPPLICATIONS` 靠 Restart Manager 关掉正在运行的旧实例，所以新进程要等安装器退出后再起，
   不能反过来抢文件锁。
+- **安装范围要和升级参数对上**：`.iss` 里 `PrivilegesRequired=admin`，但向导允许改成「仅为我安装」。
+  按用户装（exe 在 `%LOCALAPPDATA%` 下）时，`launchInstaller()` 会补 `/CURRENTUSER`，
+  否则静默升级会去提权，用户拒一次 UAC 就变成「安装包启动了、版本没变」。
+  这个判断是 `update::isPerUserInstallDir()`（纯函数，比较时带路径分隔符，
+  否则 `...\AppData\LocalBackup\x` 会被误判成在 `Local` 下）。
 
 ### 裁剪清单与取舍
 
@@ -413,8 +429,10 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
   返回 `HTTP 404`（证明请求发出去了、只是路径不存在），所以 SChannel 后端在起作用。
   **再动 TLS 相关文件必须重跑这条验证**。
 - 体积基线（0.1.0，Windows x64 Release）：构建产物 `build/bin` 约 43 MB → staging **29.36 MB**
-  → zip **12.66 MB**。如果哪天 zip 突然涨了 10 MB 以上，先怀疑 `windeployqt` 又把
-  dxcompiler / redist / opengl32sw 塞回来了（看 prune 的删除条数就知道）。
+  → zip **12.66 MB** → setup.exe **10.6 MB**。如果哪天 zip 突然涨了 10 MB 以上，先怀疑
+  `windeployqt` 又把 dxcompiler / redist / opengl32sw 塞回来了（看 prune 的删除条数就知道）。
+- `package.bat` 每轮先删掉 `dist` 里同名的 zip 与 setup.exe 再产出：否则本轮跳过安装器时，
+  dist 里那个**上一轮的 setup.exe** 会让「跳过」看起来像「成功」，体积报告也会读到过期数字。
 
 ### CI 与发版
 
@@ -425,8 +443,10 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 
 - `ci.yml` 的 Linux 任务要装 `libx11-dev libxcb1-dev libgl1-mesa-dev`（热键走 X11），
   Windows 任务用 `ilammy/msvc-dev-cmd` 进 MSVC 环境，macOS 用 `macos-14`（arm64 runner）。
-- `release.yml` 里 Inno Setup 优先直连 GitHub release 下载 6.7.4，失败 fallback 到 `choco install innosetup`；
-  两条都失败就整个任务失败，**不要**跳过安装器继续发版（用户会拿到一个没有 setup.exe 的 release）。
+- `release.yml` 里 Inno Setup 直接下官方 release 的 6.7.4，装到 `%RUNNER_TEMP%\InnoSetup6`
+  （路径确定），随后把 `ISCC=<绝对路径>` 写进 `GITHUB_ENV`；找不到 `ISCC.exe` 就让这一步失败。
+  **不要**改回「顺手装个最新版」：7.x 的消息表与 `lang\ChineseSimplified.isl` 不兼容。
+- 打包步骤带 `XTOOLS_REQUIRE_INSTALLER=1`，所以 CI 里不会出现「悄悄只发了个 zip」的 release。
 - release 已存在时用 `gh release upload --clobber` + `gh release edit` 覆盖，允许「同一个 tag 重跑」，
   不需要先删 release。
 - 清单脚本只依赖 Python 标准库，本地也能跑：
@@ -1056,6 +1076,9 @@ add_subdirectory(plugins/mytool)
 | 更新对话框里说明文字下面多出一根"横线" | `QTextBrowser` 默认按需横向滚动，长行触发横向滚动条 | `setLineWrapMode(QWidgetText::WidgetWidth)` + `setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff)` |
 | `package.bat` 打包时报 `vc_redist.x64.exe` 拒绝访问 | `windeployqt` 默认塞 25 MB 的 redist 安装器，且该文件被占用 | `--no-compiler-runtime` + 拷 app-local CRT DLL，prune 脚本里再兜底删一次 |
 | 安装器向导中文乱码 | `.iss` 被某次编辑存成了 GBK 或带 BOM 的 UTF-8 | 保持 UTF-8 无 BOM（Inno 6 能识别）；仍乱码就改存 UTF-8 with BOM，**不要改文案**（规则 5） |
+| 打包报 `'C:\Program' is not recognized` | `%ProgramFiles(x86)%` 写在 `if (...)` 块内，`(x86)` 的 `)` 提前闭合块，剩余文本被当成命令执行 | 把这段逻辑挪出块（标签子程序 + `goto`），块内不要出现带括号的路径变量 |
+| 装好的 ISCC 找不到，或报 `"" 不是内部或外部命令` | 同一个块里先 `set` 再 `%VAR%`：整块在解析期就展开完了，读到的是空值 | 同上；确实要在块内取值就 `setlocal enabledelayedexpansion` 后用 `!VAR!` |
+| CI 上安装器步骤莫名失败、日志只有一行 err | 没有把「必须有安装器」变成硬约束 | CI 里设 `XTOOLS_REQUIRE_INSTALLER=1`，`package.bat` 缺 ISCC 即 `PACKAGE_FAILED` |
 
 ---
 

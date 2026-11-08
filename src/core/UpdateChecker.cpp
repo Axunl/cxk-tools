@@ -297,9 +297,19 @@ bool UpdateChecker::launchInstaller(const QString &filePath, QString *error)
     //   /CLOSEAPPLICATIONS Restart Manager 关掉还在跑的旧实例（我们自己先退也行）
     //   /NORESTART         不要重启系统
     // 装完由 .iss 的 [Run] 段把新版本拉起来，所以这里不需要再启动一次。
-    const QStringList args{QStringLiteral("/SILENT"),
-                           QStringLiteral("/CLOSEAPPLICATIONS"),
-                           QStringLiteral("/NORESTART")};
+    QStringList args{QStringLiteral("/SILENT"),
+                     QStringLiteral("/CLOSEAPPLICATIONS"),
+                     QStringLiteral("/NORESTART")};
+
+    // 装到 %LOCALAPPDATA% 的副本是「仅为当前用户安装」（向导里选了 non-admin）。
+    // 这时必须补 /CURRENTUSER，否则 Inno 按 PrivilegesRequired=admin 去提权：
+    // 静默流程里 UAC 被拒绝一次，升级就悄无声息地什么都没做，用户只看到
+    // 「安装包已下载、版本没变」。装在 Program Files 时保持默认（本来就需要提权）。
+    const QString exeDir = QDir::fromNativeSeparators(QCoreApplication::applicationDirPath());
+    const QString localAppData = QDir::fromNativeSeparators(qEnvironmentVariable("LOCALAPPDATA"));
+    if (update::isPerUserInstallDir(exeDir, localAppData))
+        args << QStringLiteral("/CURRENTUSER");
+
     if (!QProcess::startDetached(filePath, args)) {
         if (error)
             *error = QStringLiteral("无法启动安装程序：%1").arg(QDir::toNativeSeparators(filePath));
