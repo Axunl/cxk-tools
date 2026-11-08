@@ -8,6 +8,8 @@
 //     不再有「左侧列表 + 右侧实现」的并排布局。
 //   * 工具面板**不缓存**：每次打开工具都 createPanel() 新建面板；离开工具视图
 //     （回首页、进设置、收起窗口）即销毁面板，输入值随之清空。
+//   * 本机应用只索引、不嵌入：点应用磁贴交给系统启动，然后把自己收进托盘
+//     （启动器语义，跟 uTools 一致）。应用与工具共用「最近使用」序列。
 //   * 每个工具最多一个独立窗口（ToolWindow），重复打开只前台化已有窗口。
 //     独立窗口主窗口收起时继续存活，退出时统一关闭（关闭动作在 prepareQuit()，
 //     因为 qApp->quit() 不会给窗口发 closeEvent）。
@@ -22,6 +24,7 @@
 #include <QString>
 
 class HomePage;
+class LocalAppIndex;
 class PluginManager;
 class Settings;
 class SettingsPage;
@@ -37,7 +40,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(ToolRegistry *registry, Settings *settings, PluginManager *plugins, QWidget *parent = nullptr);
+    MainWindow(ToolRegistry *registry, Settings *settings, PluginManager *plugins,
+               LocalAppIndex *apps, QWidget *parent = nullptr);
 
     /// 回到首页网格：销毁内嵌工具面板、隐藏页头、聚焦搜索框。
     /// 启动、热键/托盘唤出、Esc 从工具页返回都走这里。
@@ -59,6 +63,9 @@ public:
     /// 呼出：窗口前台显示并回到首页、把焦点落到搜索框（热键/托盘"呼出搜索"都走这里）。
     void focusSearch();
 
+    /// 回到首页并填入关键词（命令行 --search，也用于界面回归截图）。
+    void searchFor(const QString &query);
+
     /// 设置页的热键状态回显（"已生效" / 失败原因）。
     void setHotkeyStatus(const QString &text, bool ok);
 
@@ -79,12 +86,15 @@ private:
     void updateHeader(const QString &title, const QString &desc);
     /// 记录一次「用户主动打开了这个工具」：频次 + 首页的最近使用。
     void markUsed(const QString &toolId);
+    /// 启动本机应用；成功后同样记一笔频次/最近使用，然后收起主窗口。
+    void launchLocalApp(const QString &appId);
     void closeAllToolWindows();
     void saveWindowState();
 
     ToolRegistry *m_registry = nullptr;
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
+    LocalAppIndex *m_apps = nullptr;
 
     QWidget *m_titleBar = nullptr;
     QLabel *m_hotkeyHint = nullptr;   ///< 标题栏上的热键提示，改热键时要同步刷新

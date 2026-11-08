@@ -1,6 +1,7 @@
 #include "AppController.h"
 
 #include "HotkeyManager.h"
+#include "LocalAppIndex.h"
 #include "PluginManager.h"
 #include "Settings.h"
 #include "ToolRegistry.h"
@@ -24,12 +25,17 @@ void AppController::start(bool autostartLaunch)
     m_settings = &Settings::instance();
     m_registry = new ToolRegistry(this);
     m_plugins = new PluginManager(m_registry, this);
+    m_apps = new LocalAppIndex(this);
     m_hotkey = new HotkeyManager(this);
 
     // 先加载插件再建窗口：MainWindow 构造时要按已注册的工具铺首页网格
     m_plugins->loadAll();
 
-    m_main = new MainWindow(m_registry, m_settings, m_plugins);
+    // 本机应用索引：只遍历目录，图标按需读取，正常机器是毫秒级。
+    // 运行期新装的应用不热更新，重启后才出现（与插件扫描的策略一致）。
+    m_apps->scan();
+
+    m_main = new MainWindow(m_registry, m_settings, m_plugins, m_apps);
     m_tray = new TrayController(this);
 
     // ---- 接线：热键 / 托盘 -> 呼出窗口并聚焦搜索框
@@ -58,7 +64,8 @@ void AppController::start(bool autostartLaunch)
 
     const QStringList args = QCoreApplication::arguments();
 
-    // 目标页参数：--tool <id> 进内嵌工具页，--popout <id> 直接开独立窗口。
+    // 目标页参数：--tool <id> 进内嵌工具页，--popout <id> 直接开独立窗口，
+    // --search <关键词> 停在首页并预填搜索（可搜到本机应用）。
     // 只解析一次：下面截图分支与正常启动分支共用。
     auto valueAfter = [&args](const QString &flag) -> QString {
         const int index = args.indexOf(flag);
@@ -68,6 +75,7 @@ void AppController::start(bool autostartLaunch)
     };
     const QString toolTarget = valueAfter(QStringLiteral("--tool"));
     const QString popoutTarget = valueAfter(QStringLiteral("--popout"));
+    const QString searchTarget = valueAfter(QStringLiteral("--search"));
 
     // ---- 调试用：把窗口渲染成 PNG 后退出
     // 无头环境（CI/沙箱）截不了屏，这个开关是界面回归的唯一手段。
@@ -84,6 +92,8 @@ void AppController::start(bool autostartLaunch)
             m_main->showTool(toolTarget);
         else if (!popoutTarget.isEmpty())
             m_main->popOutTool(popoutTarget);
+        else if (!searchTarget.isEmpty())
+            m_main->searchFor(searchTarget);
 
         // 等一轮布局+样式应用完成再抓图，否则可能抓到未布局的空窗口
         QTimer::singleShot(500, this, [this, path, popoutTarget] {
@@ -117,6 +127,13 @@ void AppController::start(bool autostartLaunch)
 
     if (!popoutTarget.isEmpty()) {
         m_main->popOutTool(popoutTarget);
+        return;
+    }
+
+    // ---- 预填搜索（调试/脚本唤起；正常启动仍停在空搜索的首页）
+    if (!searchTarget.isEmpty()) {
+        showMainWindow();
+        m_main->searchFor(searchTarget);
         return;
     }
 

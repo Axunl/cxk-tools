@@ -11,6 +11,8 @@ set(APP_SOURCES
     core/IconBadge.h
     core/Log.cpp
     core/Log.h
+    core/LocalAppIndex.cpp
+    core/LocalAppIndex.h
     core/PluginManager.cpp
     core/PluginManager.h
     core/Settings.cpp

@@ -5,6 +5,7 @@
 
 一个窗口装下所有常用小工具：唤出就是一张图标网格，点图标进工具、输入关键词直接搜；
 想边干活边切工具，可以把某个工具单独开成窗口。
+搜索还能直接找到**本机已安装的应用**（开始菜单 / 应用程序文件夹），回车就启动。
 
 ![主窗口预览](docs/main-preview.png)
 
@@ -23,11 +24,14 @@
 
 想同时看两个工具，点工具页头右侧的「独立窗口」，或在网格上右键图标选「在独立窗口打开」。
 
+本机应用也一样能搜：输入 `chrome`、`微信` 之类，结果里会出现「本机应用」分组，回车即启动，
+主窗口自动收进托盘；打开过的应用会进入首页的「最近使用」，下次一点就走。
+
 ## 现在支持的工具
 
 | 工具 | 能力 |
 | --- | --- |
-| JSON 格式化 | 格式化 / 压缩 / 转义 / 反转义；解析失败给出精确的行列位置 |
+| JSON 格式化 | 语法高亮（键/字符串/数字/字面量分色，残缺字符串标红）与键名补全（`Ctrl+空格` 主动唤起）；**粘贴即格式化**，手动输入自动缩进（回车按结构缩进、行首闭括号自动退格）；行号栏 + 代码折叠（点行号旁的 `⌄` 折叠一段，点 `⋯ N 行` 展开）；格式化 / 压缩 / 转义 / 反转义；解析失败标红出错行并给出行列位置 |
 | 计算器 | 递归下降求值，支持 `+ - * / % ^ ()` 与 `pi`/`e`，边输边算，回车存历史 |
 
 工具本身是插件：新增工具不需要改主程序，见[增加新插件](#增加新插件)。
@@ -134,6 +138,9 @@ cpp 里还有 `Q_OBJECT` 内部类时，文件末尾要 `#include "MyTool.moc"`�
   列数随窗口宽度自适应。点图标进工具，`←→↑↓` 移动选中、回车打开
 - **搜索**：首页顶部输入关键词即过滤，相关度排序后塌成一组「搜索结果」，回车打开第一个；
   支持子串、关键词与首字母缩写（如 `jf` → JSON 格式化）；框内 `✕` 或 `Esc` 清空
+- **本机应用**：输入关键词时同时搜索开始菜单（Windows）、`/Applications`（macOS）与
+  `.desktop`（Linux）里的应用，命中后单独一组「本机应用」，回车启动并收起主窗口；
+  右键可「在文件管理器中显示」。应用与工具共用「最近使用」，最多 8 条
 - **工具页**：页头有「← 首页」与「独立窗口」；面板不缓存，离开工具视图即销毁，
   每次进入都是全新面板（输入值不留存）
 - **独立窗口**：每个工具最多一个，重复打开只把已有窗口前置；主窗口收起时它继续存在，
@@ -151,14 +158,15 @@ cpp 里还有 `Q_OBJECT` 内部类时，文件末尾要 `#include "MyTool.moc"`�
 | `--settings` | 启动后直接打开设置页 |
 | `--tool <id>` | 启动后直接在主窗口里打开该工具（如 `--tool jsonfmt`） |
 | `--popout <id>` | 启动后直接以独立窗口打开该工具（如 `--popout calc`） |
-| `--shot <路径>` | 调试用：把窗口渲染成 PNG 后退出（可配 `--settings` / `--tool` / `--popout` 截不同页面） |
+| `--search <关键词>` | 启动后停在首页并预填搜索（可用于搜本机应用） |
+| `--shot <路径>` | 调试用：把窗口渲染成 PNG 后退出（可配 `--settings` / `--tool` / `--popout` / `--search` 截不同页面） |
 
 ## 目录结构
 
 ```
 src/
   api/ITool.h        插件接口（宿主与插件共享的唯一头文件）
-  core/              配置、日志、单实例、热键、工具注册表、插件加载、组装
+  core/              配置、日志、单实例、热键、工具注册表、本机应用索引、插件加载、组装
   ui/                主窗口、首页网格、独立工具窗口、设置页、托盘
   app/main.cpp       入口 + 样式表资源
 plugins/
@@ -173,7 +181,7 @@ docs/PLUGIN.md       插件开发详解
 
 | 内容 | 位置 |
 | --- | --- |
-| 配置 | `QStandardPaths::AppConfigLocation` 下的 `cxk-tools.ini`（Windows `%LOCALAPPDATA%\cxk\cxk-tools\`；macOS `~/Library/Application Support/cxk/cxk-tools/`；Linux `~/.config/cxk/cxk-tools/`）。除热键/自启外还保存最近使用的工具、主窗口与各独立窗口的位置大小 |
+| 配置 | `QStandardPaths::AppConfigLocation` 下的 `cxk-tools.ini`（Windows `%LOCALAPPDATA%\cxk\cxk-tools\`；macOS `~/Library/Application Support/cxk/cxk-tools/`；Linux `~/.config/cxk/cxk-tools/`）。除热键/自启外还保存最近使用的工具与应用、主窗口与各独立窗口的位置大小 |
 | 日志 | `QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log` |
 | 插件 | 与可执行文件同级的 `plugins/`（macOS 在 `.app/Contents/MacOS/plugins`） |
 | 开机自启 | Windows：`HKCU\...\Run`；Linux：`~/.config/autostart/cxk-tools.desktop`；macOS：未实现 |
@@ -183,6 +191,7 @@ docs/PLUGIN.md       插件开发详解
 | 能力 | Windows | macOS | Linux |
 | --- | --- | --- | --- |
 | 界面 / 插件 / 托盘 | 支持 | 支持 | 支持（托盘依赖 StatusNotifier / AppIndicator） |
+| 本机应用索引 | 开始菜单 `.lnk`（用户 + 全局） | `/Applications`、`/System/Applications`、`~/Applications` 的 `.app` | XDG applications 目录的 `.desktop` |
 | 全局热键 | `RegisterHotKey` | 未实现（提示"暂未实现"） | X11 `XGrabKey`；Wayland 下提示原因 |
 | 开机自启 | 注册表 Run 项 | 未实现（日志警告） | XDG autostart `.desktop` |
 
@@ -193,7 +202,10 @@ docs/PLUGIN.md       插件开发详解
 - 每个工具最多一个独立窗口；同一工具可以同时存在「主窗口内嵌」与「独立窗口」两份面板，
   两者的输入互不影响（插件不该假设自己是唯一实例）
 - 唤出会回到首页并销毁内嵌面板，正在输入的内容不保留——要留着就用独立窗口
-- 「最近使用」只记最近 8 个，启动与唤出不算「使用」，只有主动打开工具才计入
+- 「最近使用」只记最近 8 个，启动与唤出不算「使用」，只有主动打开工具/应用才计入
+- 本机应用是**索引**而不是全盘扫描：只列开始菜单 / 应用程序目录 / `.desktop` 里的入口，
+  启动时扫一次，新装的应用重启后才会出现；卸载后残留的记录会被自动跳过
+- 打开应用后主窗口默认收进托盘（启动器语义），需要继续用从托盘或热键再唤出
 - macOS 的全局热键（Carbon / 辅助功能 API）与 LaunchAgent 自启尚未实现
 - Wayland 会话下没有全局热键，需要快捷键时请用 X11 会话登录
 

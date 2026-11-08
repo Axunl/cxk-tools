@@ -14,6 +14,7 @@
 class Settings;
 class ToolRegistry;
 class PluginManager;
+class LocalAppIndex;
 class HotkeyManager;
 class MainWindow;
 class TrayController;
@@ -41,6 +42,7 @@ private:
     Settings *m_settings = nullptr;
     ToolRegistry *m_registry = nullptr;
     PluginManager *m_plugins = nullptr;
+    LocalAppIndex *m_apps = nullptr;
     HotkeyManager *m_hotkey = nullptr;
     MainWindow *m_main = nullptr;
     TrayController *m_tray = nullptr;

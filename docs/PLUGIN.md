@@ -104,6 +104,10 @@ add_subdirectory(plugins/mytool)
   （这是刻意的，避免虚表错位直接崩溃）。
 - **样式**：主程序已有全局 QSS，`QPushButton` / `QLineEdit` / `QPlainTextEdit` 直接用就是统一风格；
   想要强调按钮可以 `btn->setProperty("accent", true)`。
+- **弹窗类浮层**（补全候选、日期选择等）要自己给 popup 设 `objectName`：这类控件是顶层窗口，
+  全局 qss 只能按 `QAbstractItemView#<objectName>` 命中，不设就是系统默认外观
+  （参考 `plugins/jsonfmt/JsonEditor.cpp` 里的 `jsonCompleterPopup`）。
+  另外**不要给 item view 本身加 `padding`**，它会把 viewport 撑得比内容还小，导致常驻滚动条。
 - **不要自己弹独立窗口**：宿主已经提供「独立窗口」（页头按钮 / 磁贴右键），插件再弹自己的顶层窗口
   会出现两套窗口语义；普通对话框（文件选择等）不在此列。
 
@@ -118,3 +122,7 @@ add_subdirectory(plugins/mytool)
 想把求值、解析这类纯逻辑单独验证，别把它埋在 `.cpp` 的匿名命名空间里 ——
 抽成一个 header（参考 `plugins/calc/ExprEval.h`、`plugins/jsonfmt/JsonText.h`），
 再用一个临时 CMake 工程 include 它做断言测试，测完把临时工程删掉即可。
+
+面板类本身也可以放头文件（参考 `plugins/jsonfmt/JsonFmtPanel.h`）：临时工程把它和
+`JsonFmtTool.cpp` 一起编译，就能直接构造面板做端到端断言（点按钮、发按键事件），
+比只测纯逻辑覆盖得多。**纯逻辑 header + 面板 header** 是这套插件结构里最好测的形态。

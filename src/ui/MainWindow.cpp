@@ -2,6 +2,7 @@
 
 #include "HomePage.h"
 #include "IconBadge.h"
+#include "LocalAppIndex.h"
 #include "PluginManager.h"
 #include "Settings.h"
 #include "SettingsPage.h"
@@ -15,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -34,11 +36,13 @@ constexpr int kDefaultHeight = 720;
 
 } // namespace
 
-MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager *plugins, QWidget *parent)
+MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager *plugins,
+                       LocalAppIndex *apps, QWidget *parent)
     : QMainWindow(parent)
     , m_registry(registry)
     , m_settings(settings)
     , m_plugins(plugins)
+    , m_apps(apps)
 {
     // 无边框 + 自绘标题栏（与 uTools 那类工具面板观感一致）。
     // 拖动靠 QWindow::startSystemMove()，缩放靠 QSizeGrip，都是跨平台 API。
@@ -155,7 +159,7 @@ void MainWindow::buildUi()
     m_stack = new QStackedWidget(column);
     m_stack->setObjectName(QStringLiteral("toolStack"));
 
-    m_home = new HomePage(m_registry, m_settings, m_plugins, m_stack);
+    m_home = new HomePage(m_registry, m_settings, m_plugins, m_apps, m_stack);
     m_stack->addWidget(m_home);
 
     m_settingsPage = new SettingsPage(m_settings, m_plugins, m_stack);
@@ -173,6 +177,7 @@ void MainWindow::buildUi()
 
     connect(m_home, &HomePage::toolActivated, this, [this](const QString &id) { showTool(id); });
     connect(m_home, &HomePage::toolPopOutRequested, this, &MainWindow::popOutTool);
+    connect(m_home, &HomePage::appActivated, this, &MainWindow::launchLocalApp);
 
     connect(m_settingsPage, &SettingsPage::restartRequested, this, &MainWindow::restartRequested);
     connect(m_settingsPage, &SettingsPage::hotkeyChanged, this, [this](const QKeySequence &seq) {
@@ -317,6 +322,31 @@ void MainWindow::markUsed(const QString &toolId)
     // 只有用户主动打开才记账：启动/唤出恢复不计，否则频次与最近使用会被启动次数污染
     m_settings->bumpUsage(toolId);
     m_settings->touchRecent(toolId);
+}
+
+void MainWindow::launchLocalApp(const QString &appId)
+{
+    if (!m_apps)
+        return;
+
+    QString error;
+    if (!m_apps->launch(appId, &error)) {
+        // 入口被删/权限不足时给出可读原因，而不是静默失败让用户以为点错了
+        QMessageBox::warning(this, QStringLiteral("打不开这个应用"), error);
+        return;
+    }
+
+    // 启动器语义：把用户送出去之后自己收起，不留在前面挡着（uTools 同样处理）。
+    // 失败不记账；成功后写入的是同一个「最近使用」序列，工具与应用一起排序。
+    m_settings->bumpUsage(appId);
+    m_settings->touchRecent(appId);
+    close();
+}
+
+void MainWindow::searchFor(const QString &query)
+{
+    showHome();
+    m_home->setSearchText(query);
 }
 
 void MainWindow::updateHeader(const QString &title, const QString &desc)

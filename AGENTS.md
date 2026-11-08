@@ -136,6 +136,7 @@ cxk-tools/
 │   │   ├── AppController.cpp   组装层：创建对象、连信号、处理命令行
 │   │   ├── Settings.*          配置单例，INI 落盘
 │   │   ├── ToolRegistry.*      工具条目容器 + 搜索评分
+│   │   ├── LocalAppIndex.*     本机应用索引（开始菜单 / .app / .desktop）+ 启动
 │   │   ├── PluginManager.*     扫描 plugins/ 并用 QPluginLoader 加载
 │   │   ├── HotkeyManager.*     全局热键（Win32 / X11；macOS 待补）
 │   │   ├── SingleInstance.*    QLocalServer 单实例与二次激活
@@ -144,7 +145,7 @@ cxk-tools/
 │   │   └── Log.*               日志落盘 + 消息处理器
 │   ├── ui/                     只向下依赖 core/api
 │   │   ├── MainWindow.*        自绘标题栏 + 页头 + QStackedWidget（首页/设置/工具）
-│   │   ├── HomePage.*          首页：搜索框 + 「最近使用 / 全部」磁贴网格
+│   │   ├── HomePage.*          首页：搜索框 + 「最近使用 / 全部 / 本机应用」磁贴网格
 │   │   ├── ToolWindow.*        单个工具的独立窗口（每工具最多一个）
 │   │   ├── SettingsPage.*      热键录制、开机自启、插件加载状态
 │   │   └── TrayController.*    托盘图标与右键菜单
@@ -152,7 +153,7 @@ cxk-tools/
 │       ├── main.cpp            启动顺序（见文件头注释，改动前先读）
 │       └── resources/          style.qss + resources.qrc
 ├── plugins/
-│   ├── jsonfmt/{JsonFmtTool.*, JsonText.h}
+│   ├── jsonfmt/{JsonFmtTool.*, JsonFmtPanel.*, JsonEditor.*, JsonHighlighter.*, JsonText.h}
 │   └── calc/{CalcTool.*, ExprEval.h}
 ├── scripts/{build.bat, build.sh, package.bat}
 └── docs/{PLUGIN.md, main-preview.png}
@@ -184,15 +185,20 @@ cxk-tools/
    关闭按钮与首页 `Esc` 语义相同：只是 `hide()`，进程不退出；真正退出必须先 `prepareQuit()`，
    否则会被 `closeEvent` 拦下。
 3. 全局热键与托盘「呼出搜索」都只做一件事：`MainWindow::focusSearch()`（显示 + 回首页 + 聚焦搜索框并全选）。
-4. 首页就是磁贴网格（`HomePage` + `ToolTile` + qss），不要另起 `QListView` + delegate 实现；
+4. 首页就是磁贴网格（`HomePage` + `LauncherTile` + qss），不要另起 `QListView` + delegate 实现；
    也不需要独立浮层。磁贴固定 104×100，列数由 `columnsFor()` 按视口宽度算。
+   工具与本机应用共用同一种磁贴，靠 `LauncherItem::kind` 区分点击行为与右键菜单。
 5. 工具面板**不缓存**：每次进入工具都 `createPanel()` 新建面板；离开视图（回首页、进设置、
    收起窗口）即销毁面板（`destroyToolPanel()`），输入值随之清空。同一工具可以同时存在
    「内嵌面板」与「独立窗口面板」两份，插件不得假设自己是唯一实例。
-6. 使用频次与「最近使用」只在用户主动打开工具时记账（`markUsed()`），启动/唤出不算。
+6. 使用频次与「最近使用」只在用户主动打开工具/应用时记账（`markUsed()` / `launchLocalApp()`），
+   启动与唤出不算。工具与应用共用同一份最近使用（上限 8），按时间戳混排。
 7. 独立窗口（`ToolWindow`）每个工具最多一个，重复打开只 `raise + activateWindow`；
    主窗口收起时独立窗口继续存活；退出时由 `prepareQuit()` 统一关闭 —— **不能放在
    `closeEvent` 里，`qApp->quit()` 不会给窗口发 closeEvent**。
+8. 本机应用只从系统入口索引（`LocalAppIndex`），**不做全盘扫描**；启动统一交给系统
+   （Windows/macOS `QDesktopServices`，Linux `gio launch` 再退回 `Exec`）。
+   启动成功后主窗口 `close()` 收进托盘（启动器语义，别改成留在原地）。
 
 ---
 
@@ -263,6 +269,7 @@ build/bin/cxk-tools --shot build/shot-home.png                    # 首页网格
 build/bin/cxk-tools --shot build/shot-tool.png --tool jsonfmt     # 工具页（页头 + 面板）
 build/bin/cxk-tools --shot build/shot-settings.png --settings     # 设置页
 build/bin/cxk-tools --shot build/shot-popout.png --popout calc    # 独立窗口
+build/bin/cxk-tools --shot build/shot-search.png --search chrome  # 搜索（含「本机应用」分组）
 ```
 
 `--shot` 会等 500ms 让布局与样式生效，把窗口 `grab()` 成 PNG 后自动退出，是**无头环境下唯一的界面回归手段**。
@@ -402,19 +409,38 @@ add_subdirectory(plugins/mytool)
 - 空查询按 `1000 - min(usage, 500)` 排序（= 常用工具靠前），上限防止某个工具永远霸榜。
 - 同分按名称 `localeAwareCompare` 排序，保证结果稳定（否则会随插件加载顺序抖动）。
 
+## 本机应用搜索（`LocalAppIndex::search`）
+
+| 命中方式 | 分值 |
+| --- | --- |
+| 名称完全相等 | 100 |
+| 名称前缀 | 90 |
+| 逐词前缀（`studio` → Visual Studio Code） | 80 |
+| 名称包含 | 70 |
+| 首字母缩写（`vsc`） | 65 |
+| 可执行文件名包含 | 50 |
+
+- 同样加 `min(usage, 20)`；**空查询直接返回空** —— 应用不铺满首页，只出现在搜索结果
+  与「最近使用」里，否则上百个开始菜单项会把网格淹掉。
+- 名称用 `toCaseFolded()` 比较，中文原样参与，不做拼音（与工具搜索一致）。
+- 索引在启动时扫一次（`AppController::start`），运行期不热更新。
+
 ## 配置（`Settings`，INI 明文）
 
 | 键 | 含义 | 说明 |
 | --- | --- | --- |
 | `settings/hotkey` | 全局热键 | 存 `PortableText`（`Ctrl+Alt+Space`），跨平台可读 |
 | `settings/start_with_system` | 开机自启 | 真正落系统项见下 |
-| `recent/<toolId>` | 最近使用时间戳 | UTC ISO8601（**带毫秒**，`ISODateWithMs`），最多 8 条，只在用户主动打开时写 |
-| `usage/<toolId>` | 使用频次 | 参与搜索加成 |
+| `recent/<id>` | 最近使用时间戳 | UTC ISO8601（**带毫秒**，`ISODateWithMs`），最多 8 条，只在用户主动打开时写；`id` 是工具 id 或 `app:<hash>` |
+| `usage/<id>` | 使用频次 | 参与搜索加成，工具与应用共用同一套键 |
 | `ui/main_geometry` | 主窗口位置/大小 | `QWidget::saveGeometry()` 的字节流 |
 | `ui/tool/<toolId>/geometry` | 独立窗口位置/大小 | 同上；`name` 里的 `/` 归一化成 `_` |
 
 - 「最近使用」不能用秒级精度：同一秒内连开两个工具时，「最新」会退化成按 id 排序；
   排序也必须用 `toMSecsSinceEpoch()`，`toSecsSinceEpoch()` 会把毫秒抹掉。
+- 本机应用的 id 存 **路径的 FNV-1a 哈希**（`app:<16 hex>`），不存路径本身：
+  INI 的键里带 `/` 会被当成组层级、带盘符冒号也不好读；哈希还让「同一入口换大小写写法」
+  在 Windows 上得到同一个 id。**不要改用 `qHash`**（Qt 可能加随机种子，重启后 id 全变）。
 - 几何恢复要校验窗口是否还在某块屏幕内（`WindowGeometry.h`），否则换显示器后会「窗口消失」。
 - 已废弃的 `settings/last_tool`（旧版恢复上次工具用）不再读取，老 ini 里残留的键无害。
 
@@ -448,6 +474,8 @@ add_subdirectory(plugins/mytool)
   页头在工具页与设置页显示，含「← 首页」、标题/描述、「独立窗口」（设置页隐藏）。
 - 首页网格：磁贴固定 `104×100`（图标 48），列数 = `(视口宽 - 2*28 - 12) / (104 + 8)`。
   **恒定扣掉 12px 滚动条预留**，见踩坑表。键盘：`←→` 移一格、`↑↓` 移一行、`Enter` 开当前项。
+- 搜索时工具与本机应用分两组（「工具」「本机应用」），磁贴顺序 = 键盘导航顺序：
+  最近使用 → 工具结果 → 应用结果。空关键词时应用不展示（只可能出现在「最近使用」里）。
 - 独立窗口 `ToolWindow`：原生边框（不加 `FramelessWindowHint`、不用 `Qt::Tool`），
   `WA_DeleteOnClose`，面板随窗口销毁；去重表 `QHash<QString, QPointer<ToolWindow>>` 在 `MainWindow`。
 - `Esc` 分层见「交互约定」第 2 条；热键捕获中的 `Esc` 由 `HotkeyButton` 吞掉只取消捕获。
@@ -456,14 +484,47 @@ add_subdirectory(plugins/mytool)
 
 - 全部按 **objectName 选择器**生效：`#mainRoot` `#titleBar` `#titleText` `#titleHotkey`
   `#titleBtn` `#titleBtnSettings` `#titleBtnClose` `#homeRoot` `#homeTop` `#homeSearch`
-  `#homeSearchClear` `#homeScroll` `#homeContent` `#sectionTitle` `#toolTile` `#tileName`
+  `#homeSearchClear` `#homeScroll` `#homeContent` `#sectionTitle` `#launcherTile` `#tileName`
   `#homeFooter` `#homeHint` `#homeEmptyTitle` `#homeEmptyDesc` `#pageHeader` `#pageBack`
   `#pagePopout` `#toolTitle` `#toolDesc` `#toolStack` `#toolWindowRoot`；按钮用 `[accent="true"]`。
-- 磁贴的 hover / 键盘选中走**动态属性**（`#toolTile[hovered="true"]`、`#toolTile[current="true"]`），
+  插件内的 `#jsonCompleterPopup`（QCompleter 的补全弹窗）也在这份全局 qss 里 —— 弹窗是
+  顶层 `QAbstractItemView`，只能靠 objectName 命中，见踩坑表。
+- 磁贴的 hover / 键盘选中走**动态属性**（`#launcherTile[hovered="true"]`、`#launcherTile[current="true"]`），
   不用 `:hover` —— QWidget 子类的 `:hover` 依赖样式引擎主动打 `WA_Hover`，跨版本不保证触发。
 - 全局 `QPushButton` 带 `padding: 6px 14px`，**30px 宽的小按钮必须显式 `padding: 0`**，
   否则文字被挤没、只剩一个小点（标题栏的最小化/关闭曾因此显示成两个点）。
 - qss 通过 `.qrc` 编进二进制（`CMAKE_AUTORCC ON`），路径固定 `:/style.qss`；改完不用改代码，重编即可。
+
+## JSON 编辑器（`plugins/jsonfmt`，插件内部）
+
+- **折叠**：Qt 没有公开的折叠 API，做法是把区块内部的 `QTextBlock::setVisible(false)`
+  （Qt Creator 也是这么干的）。隐藏行仍留在文档里 —— 块号、字符位置都不变，
+  所以行号是绝对行号（折叠第 9 行后下一个可见行就是 19），光标也不会错位。
+- 可折叠区块由 `jsontext::foldRegions()` 扫出来（纯逻辑，可单测）：只认**跨行**的 `{}`/`[]`，
+  字符串里的括号不算，括号没配齐时静默跳过（用户正在敲）。区域是延迟重算的
+  （`m_foldTimer` 200ms），所以 `m_foldDirty` 为真时 `foldEnd()` 一律返回 -1、不画箭头。
+- 折叠状态存的是"起点行 → 当时算出的终点行"。文本一变，只有两端都对得上的折叠才保留，
+  对不上就丢掉：沿用旧行号会把另一段内容莫名藏起来。
+- 光标落进隐藏行（撤销、跳到出错行、程序化设置）会**自动展开**那个折叠，否则光标藏起来了。
+- 折叠占位符（`⋯ N 行`）画在 `paintEvent` 里叠在正文之上，点它即展开；点行号栏的箭头同样切换。
+- 行号栏是子控件 `JsonGutter`（`JsonEditor` 的 friend，转调私有钩子）。**它不能放进匿名命名空间**：
+  头文件里的 `friend class JsonGutter;` 认的是全局作用域那个类。
+- **读全文一律用 `JsonEditor::fullText()`**，不要 `toPlainText()`：隐藏块是否计入没有文档保证
+  （Qt 6.8 实测会计入，但不该赌）。格式化、复制、扫描补全键都走 `fullText()`。
+- **进插件就聚焦输入框**（`JsonFmtPanel::showEvent` 里 `QTimer::singleShot(0, ...)` 再 `setFocus`）。
+  同步设会被宿主的焦点链覆盖，所以必须延后一拍。
+- **粘贴即格式化**（`JsonFmtPanel::formatPasted`）：`JsonEditor::insertFromMimeData()` 是
+  Ctrl+V / 右键粘贴 / 拖放 / 中键**所有入口的汇合点**，在那里发 `textPasted()` 信号；
+  面板收到后若整篇能解析就整篇重排，不能解析（粘贴的是片段或根本不是 JSON）就静默不动。
+  刻意**不做**"边打字边整篇重排"：光标会被甩走、撤销栈被打散，输入体验更差。
+- **手动输入只做自动缩进**（`JsonEditor::handleAutoIndent`，排在 `handleAutoPair` 之前）：
+  回车按当前行结构给缩进（上一行以 `{`/`[` 结尾就 +1 级，否则与上一行对齐；
+  光标卡在自动补齐的 `{}` 中间时一次拆成三行）；行首敲 `}`/`]` 先退一级；
+  后面紧跟着同一个闭括号就直接跳过去（否则会出现两个闭括号）。
+  缩进单位默认 4 空格（与 `QJsonDocument::Indented` 一致），当前行用 Tab 时跟着用 Tab。
+  输入法拼字（`isComposing()`）期间一律不介入。
+- 粘贴后光标的三级映射见 `mapCursorPosition()`：文末 → 文末；非空白字符锚点（需校验）；
+  都对不上（`QJsonDocument` 输出会按键名排序）才退回"保行号 + 列号夹住"。
 
 ## 日志
 
@@ -490,21 +551,32 @@ add_subdirectory(plugins/mytool)
 | Windows 构建报找不到 `rc.exe` | 受限环境 vcvars 探不到 Windows SDK（`reg.exe` 被拦） | `build.bat` 里有 SDK 路径兜底，别删 |
 | 运行程序"秒退"，什么都没发生 | 单实例互斥：已有实例在跑，第二个只唤醒旧实例然后退出 | 调试前先查并结束残留进程 |
 | 运行 `--shot` 没生成图片、也没报错 | `bin/` 里没有 Qt DLL（被删过，或用 `-DXTOOLS_DEPLOY_QT=OFF` 构建） | 重新配置构建触发 `DeployQt.cmake`，或临时把 Qt 的 `bin` 加进 `PATH` |
+| 补全弹窗是系统默认外观，和卡片界面完全不搭 | popup 是 `QCompleter` 内部创建的**顶层** `QAbstractItemView`，没有 objectName 就命中不了全局 qss | `completer->popup()->setObjectName("jsonCompleterPopup")`，qss 按 `QAbstractItemView#jsonCompleterPopup` 写（见 `JsonEditor`） |
+| 只三五条候选的补全弹窗也常驻一根竖向滚动条 | 给 item view **本身**加 `padding` 会把 viewport 撑得比内容还小 | view 不设 `padding`，留白放到 `::item` 的 `padding` / `min-height` |
+| `QCompleter::setCurrentRow(0)` 之后弹窗里一条都不高亮 | `complete()` 会按新前缀重建候选并重置行号，且 `setCurrentRow()` 在这条路径上拿到空索引 | 在 `complete()` **之后**用 `popup()->setCurrentIndex(completer->completionModel()->index(0, 0))` |
 | IDE（CLion）里点运行没反应、编辑器一片红 | CMake 工程没加载成功（没有可用 run configuration），常见于没配 Qt 路径或工具链选了 MinGW | 用 `CMakePresets.json` 的 `debug` 配置、Toolchain 选 Visual Studio，再 `Tools → CMake → Reset Cache and Reload Project`；运行配置选 `cxk-tools` 目标，**不要用单文件「Run 'main.cpp'」** |
 | 编辑器顶部提示「此文件不属于任何项目目标」且侧栏文件全灰 | 工程在仓库还没有 `CMakeLists.txt` 时被打开过，CLion 把「普通文件夹」的判断持久化在 `%LOCALAPPDATA%\JetBrains\CLion*\projects\<工程名>.*\project-model-cache\cache.data` 里，之后重启也不会重新识别 CMake | 关掉 IDE → 删 `.idea/` 与该 `projects\<工程名>.*` 缓存目录 → 重新打开。删 `.idea` 时**必须连 `modules.xml` + `.iml` 一起补回**（模块=内容根），否则 CLion 眼里的工程是 0 个文件（日志 `project model has 0 sources ... 0 total files in content`），同样不会配置 CMake |
 | 从终端 `start clion64.exe` 启动的 IDE 里 CMake 配置静默失败 | 子进程继承了启动终端的限制：受限账号下 `vcvarsall.bat` 内部调 `reg.exe` 探测 VS/SDK 被拦，日志表现为 `WindowsEnvironmentReader` 的 `InterruptedException` 与 `CMakeRunner - No output` → cmake 找不到编译器 | IDE 一律通过开始菜单/桌面图标正常启动；排查时看 `%LOCALAPPDATA%\JetBrains\CLion*\log\idea.log` 里的 `CMakeRunner` 与 `WindowsEnvironmentReader` |
 | 在 IDE 里启动后立刻退出、无窗口 | 运行目录缺 Qt DLL（旧版 `bin/` 只有 exe 和 plugins） | 现在由 `DeployQt.cmake` 自动部署；若仍出现，检查 `bin/` 下是否有 `Qt6Core[d].dll` 与 `platforms/` |
 | 插件目录里没东西但也不报错 | 首次构建 `plugins/` 可能不存在 | `loadAll()` 会 `mkpath` 并在日志里告警；`xtools_add_plugin` 也有 POST_BUILD 建目录 |
 | IDE 里点运行后界面「已加载 0 个工具」、日志「发现 0 个候选文件」 | 运行配置只构建 `cxk-tools` 目标，插件是独立 MODULE 目标、不在依赖链上 → `bin/plugins` 为空 | 根 `CMakeLists.txt` 收尾处已 `add_dependencies(cxk-tools 全部插件)`（清单由 `xtools_add_plugin` 写全局属性 `XTOOLS_PLUGIN_TARGETS`），点运行即连带构建；仍出现则检查 `bin/plugins` 是否被清过，并**重启应用**（插件只在启动时扫描一次） |
+| 本机应用在「最近使用」里重启后全失效 | 直接把路径当 QSettings 键（`/` 被当组层级），或用了 `qHash`（Qt 可能加随机种子） | 用 `LocalAppIndex::idForPath()` 的 FNV-1a 哈希 id（`app:<16 hex>`），路径只存在内存里 |
+| `QProcess::startDetached` 打不开开始菜单里的 `.lnk` | `.lnk` 不是可执行文件，CreateProcess 不会解析快捷方式 | Windows/macOS 交给 `QDesktopServices::openUrl`（ShellExecute / LaunchServices）；Linux 用 `gio launch` 或 `Exec` |
 | `.bat` 改了中文注释后脚本整体崩 | cmd 按本地代码页（GBK）逐字节解析 | `.bat`/`.cmd` 只能纯 ASCII（规则 5） |
 | IDE 运行控制台里日志中文变 `???` 乱码（文件日志却是好的） | `qPrintable()` 实际是 `toLocal8Bit()`，中文 Windows 下向 stderr 写 GBK 字节，而 IDE 控制台按 UTF-8 解码 | 日志写 stderr 一律 `toUtf8()`（见 `Log.cpp` handler）；Windows 下有控制台时 `SetConsoleOutputCP(CP_UTF8)` 兜底 |
 | `QLineEdit` 自带清空按钮压在搜索框视觉圆角边框上 | 其内置 clear button 按控件右缘定位，qss 的 `margin`/`padding` 都挪不动它 | 自建 `QToolButton#homeSearchClear` 浮在框内，在 `eventFilter` 的 `Resize` 里显式摆位；别再试 qss 属性 |
-| `QWidget` 子类设了 qss `background` 却不显示 | QWidget 子类默认不画样式背景 | `setAttribute(Qt::WA_StyledBackground, true)`（见 `ToolTile`） |
+| `QWidget` 子类设了 qss `background` 却不显示 | QWidget 子类默认不画样式背景 | `setAttribute(Qt::WA_StyledBackground, true)`（见 `LauncherTile`） |
 | 首页磁贴只排一列、之后不再重排 | 列数按滚动区视口宽度算，首帧视口还没拿到真实宽度；只监听 `HomePage::resizeEvent` 会漏掉视口自己的尺寸变化 | 视口也装 `eventFilter`，`Resize` 时 `reflow()`；列数没变时直接 return |
 | 网格列数在滚动条出现/消失时反复抖动 | 按真实 viewport 宽度算列数，滚动条占掉 10px → 少一列 → 变矮 → 滚动条消失 → 多一列 … | 列数公式恒定扣 `kScrollbarReserve`(12px) |
 | 退出程序后独立窗口还留着、几何没存 | `qApp->quit()` 不会给窗口发 `closeEvent` | 清理放 `MainWindow::prepareQuit()`（存几何 + `closeAllToolWindows()`） |
 | 同一秒内开的两个工具，「最近使用」顺序不对 | 时间戳只有秒级精度，退化成按 id 排序；且 `toSecsSinceEpoch()` 会把毫秒抹掉 | 写 `ISODateWithMs`，排序用 `toMSecsSinceEpoch()` |
 | `--shot` 截出来的永远是首页 | `showMainWindow()` 会 `showHome()`，切页动作排在它前面就被覆盖 | 先 `showMainWindow()`，再 `--tool` / `--settings` / `--popout` |
+| 折叠后读出来的全文少了内容 | `QPlainTextEdit::toPlainText()` 对隐藏块的处理没有文档保证 | 用 `JsonEditor::fullText()`（逐块拼） |
+| 行号栏位置偏、压住输入框圆角 | 行号栏按 `frameWidth()` 摆：它把 qss 的 border **和 padding** 一起算进去了 | 用 `contentsRect()` 定位，另给 `setViewportMargins()` 多留 8px 当"分隔线到正文"的留白 |
+| 给编辑器 `sendEvent` 鼠标事件没反应 | `QAbstractScrollArea` 的鼠标事件是从 **viewport** 转发上来的，直接发给控件本身会被 `QAbstractScrollArea::event()` 丢掉 | 事件发给 `editor->viewport()`（坐标本来就是 viewport 坐标系） |
+| 自动格式化后光标跳到别的 token 上 | `QJsonDocument` 输出时按键名排序，字符流不再一一对应，"非空白字符锚点"会失效 | `mapCursorPosition()` 里先校验锚点、校验不过退回保行号映射 |
+| 粘贴走了一条没被监听的路径（右键菜单粘贴没格式化） | 各路粘贴在 Qt 里最终都落到 `insertFromMimeData()`，只管快捷键一定会漏 | 在 `JsonEditor::insertFromMimeData()` 里发信号，别在 `keyPressEvent` 里匹配 Ctrl+V |
+| 自动缩进把输入法的拼字打断/吞掉按键 | 拼字期间的按键还不是最终文本 | `handleAutoIndent()` 开头检查 `isComposing()` 直接返回 |
 
 ---
 

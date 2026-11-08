@@ -127,18 +127,18 @@ QToolButton#homeSearchClear:pressed {
 
 /* 磁贴：默认透明，hover / 键盘选中才出底色。
    hover 用动态属性而不是 :hover —— QWidget 子类的 :hover 依赖样式引擎
-   主动打 WA_Hover，跨 Qt 版本/平台不保证触发（ToolTile 里显式设属性）。 */
-#toolTile {
+   主动打 WA_Hover，跨 Qt 版本/平台不保证触发（LauncherTile 里显式设属性）。 */
+#launcherTile {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 10px;
 }
 
-#toolTile[hovered="true"] {
+#launcherTile[hovered="true"] {
     background: #EEF2FF;
 }
 
-#toolTile[current="true"] {
+#launcherTile[current="true"] {
     background: #E6EBFF;
     border-color: #C7D2FE;
 }
@@ -293,6 +293,31 @@ QTextEdit {
     padding: 8px;
     selection-background-color: #4F6BF6;
     selection-color: #FFFFFF;
+}
+
+/* JSON 编辑器的键名补全弹窗。
+   popup 是 QCompleter 内部创建的顶层 QAbstractItemView，只能靠 objectName 命中
+   （见 plugins/jsonfmt/JsonEditor.cpp），不设样式就是系统默认外观，与卡片界面不搭。
+   注意不要给 view 加 padding：item view 的 padding 会把 viewport 撑得比内容还小，
+   明明只三五条候选也会常驻一根竖向滚动条（试过）。留白交给 item 的 padding。 */
+QAbstractItemView#jsonCompleterPopup {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    outline: none;
+    selection-background-color: #EEF2FF;
+    selection-color: #0F172A;
+}
+
+QAbstractItemView#jsonCompleterPopup::item {
+    min-height: 26px;
+    padding: 0 10px;
+    color: #0F172A;
+}
+
+QAbstractItemView#jsonCompleterPopup::item:selected {
+    background: #EEF2FF;
+    color: #1D4ED8;
 }
 
 QCheckBox {
