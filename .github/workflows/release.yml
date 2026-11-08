@@ -1,0 +1,219 @@
+# 发版：推送 v* tag（或手动指定 tag）后自动出三平台产物并创建 GitHub Release。
+#
+# 产物（命名是更新器的契约，改名前先读 AGENTS.md「产物命名」）：
+#   cxk-tools-<ver>-windows-x64.zip          便携版
+#   cxk-tools-<ver>-windows-x64-setup.exe    Windows 安装器（Inno Setup）
+#   cxk-tools-<ver>-macos-<arch>.dmg         macOS 安装包
+#   latest.json / SHA256SUMS.txt             更新清单与校验和
+#
+# 版本号唯一来源是 CMakeLists.txt 的 project(... VERSION ...)：
+# prepare 会校验 tag 与它一致，不一致直接失败，绝不在 CI 里偷改源码里的版本。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布/重跑的 tag（例如 v0.1.0）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - id: version
+        name: Check tag matches CMakeLists version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          CMAKE_VERSION="$(grep -oP 'project\(cxk-tools\s+VERSION\s+\K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1)"
+          echo "tag=$TAG version=$VERSION cmake=$CMAKE_VERSION"
+          if [ -z "$CMAKE_VERSION" ]; then
+            echo "::error::CMakeLists.txt 里找不到 project(... VERSION ...)"
+            exit 1
+          fi
+          if [ "$VERSION" != "$CMAKE_VERSION" ]; then
+            echo "::error::tag 是 $TAG，但 CMakeLists.txt 的版本是 $CMAKE_VERSION。先把版本号改成一致再打 tag。"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: windows-x64
+    needs: prepare
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # 固定 6.7.4：installer/windows/lang/ChineseSimplified.isl 是 6.5.0+ 的翻译，
+      # 用 7.x 编译会因消息表变动失败。先试官方 release，失败再退回 choco。
+      - name: Install Inno Setup 6.7.4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe'
+          $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+            Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER' -Wait
+          } catch {
+            Write-Host "direct download failed, falling back to chocolatey: $_"
+            choco install innosetup -y --no-progress
+          }
+          if (Get-Command iscc -ErrorAction SilentlyContinue) { Write-Host "ISCC on PATH" }
+          else { Get-ChildItem 'C:\Program Files (x86)\Inno Setup*','C:\Program Files\Inno Setup*',"$env:LOCALAPPDATA\Programs\Inno Setup*" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "found: $_" } }
+
+      - name: Build and package
+        shell: cmd
+        run: scripts\package.bat
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\release | Out-Null
+          $v = (Get-Content build\xtools-version.txt).Trim()
+          Get-ChildItem dist -Filter "cxk-tools-$v-windows-x64*" -File | Copy-Item -Destination dist\release
+          Get-ChildItem dist\release | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/release/*
+          if-no-files-found: error
+
+  macos:
+    name: macos-${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-14 是 Apple Silicon；Intel 包首轮先不做（清单里缺该平台时客户端会退化到打开发布页）
+          - os: macos-14
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: clang_64
+          cache: true
+
+      - name: Build
+        env:
+          QT_DIR: ${{ env.QT_ROOT_DIR }}
+        run: ./scripts/build.sh Release
+
+      - name: Package dmg
+        env:
+          MACDEPLOYQT: ${{ env.QT_ROOT_DIR }}/bin/macdeployqt
+        run: ./scripts/package-macos.sh build dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: [prepare, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # 汇总所有产物到 dist/ 根：latest.json 生成脚本只扫顶层文件
+      - name: Gather artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist -mindepth 2 -type f -exec cp -v {} dist/ \;
+          ls -la dist
+
+      - name: Build release notes from git log
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          if [ -n "$PREV" ]; then
+            {
+              echo "自 ${PREV} 以来的变更："
+              echo
+              git log --no-merges --pretty=format:'- %s (%h)' "${PREV}..${TAG}"
+            } > release-notes.md
+          else
+            {
+              echo "首个版本。"
+              echo
+              git log --no-merges --pretty=format:'- %s (%h)' "${TAG}"
+            } > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Generate latest.json + SHA256SUMS.txt
+        shell: bash
+        run: |
+          python3 scripts/gen-release-manifest.py \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --tag "${{ needs.prepare.outputs.tag }}" \
+            --dir dist --out dist \
+            --notes release-notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          # 重跑同一个 tag 时 release 已经存在：改成覆盖上传，而不是让整个任务失败
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "CXK 工具箱 ${TAG}" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "CXK 工具箱 ${TAG}" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi

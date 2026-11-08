@@ -1,0 +1,70 @@
+# 编译校验：三平台都要能编过（AGENTS.md 规则 3）。
+#
+# 这里只做「配置 + 编译」，不打包、不发版 —— 打包与发版在 release.yml 里。
+# 之所以单开一个工作流：发版流程慢且要写权限，任何一个 PR 都不该触发它。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-2022
+            qt_arch: win64_msvc2022_64
+          - name: macos
+            os: macos-14
+            qt_arch: clang_64
+          - name: linux
+            os: ubuntu-22.04
+            qt_arch: linux_gcc_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      # Linux 全局热键走 X11：缺开发包会直接 configure 失败（见 README 环境要求）
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcb1-dev libgl1-mesa-dev ninja-build
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --parallel 4
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "version=$(cat build/xtools-version.txt)"
+          ls build/bin
+          ls build/bin/plugins | wc -l
