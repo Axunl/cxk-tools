@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+dist/
+cmake-build-*/
+smoke/
+*.user
+*.VC.db
+.vs/
+build_log.txt
+shot_*.png
+.workbuddy
+
+# Qt / CMake
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+*.pdb
+*.obj
+
+# IDE
+.idea/

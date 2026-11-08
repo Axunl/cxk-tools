@@ -1,0 +1,49 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "xtools-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64",
+        "CMAKE_MAKE_PROGRAM": "C:/Qt/Tools/Ninja/ninja.exe"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug (Qt 6.8.3 / MSVC)",
+      "description": "CLion 与命令行共用的调试配置；产物在 build/clion-debug/bin",
+      "inherits": "xtools-base",
+      "binaryDir": "${sourceDir}/build/clion-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (Qt 6.8.3 / MSVC)",
+      "description": "优化构建；产物在 build/clion-release/bin",
+      "inherits": "xtools-base",
+      "binaryDir": "${sourceDir}/build/clion-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    }
+  ]
+}
