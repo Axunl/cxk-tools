@@ -28,19 +28,27 @@ set(_xtools_freed 0)
 set(_xtools_removed 0)
 
 # 计算并删除一项；无论是文件还是目录都要能处理（目录按递归求和算体积）。
+#
+# 符号链接要单独跳过：macOS framework 内部全是链（QtSvg.framework/Resources →
+# Versions/Current/Resources、Versions/Current → A），而 IS_DIRECTORY 会跟随链接，
+# 一旦把它当目录去 file(SIZE) 就会硬失败「path that is not readable」，整个打包
+# 停在这一步。链接本身不占体积，删的时候跟着父目录一起走，跳过去就行。
 function(_xtools_prune path reason)
-    if(NOT EXISTS "${path}")
+    if(NOT EXISTS "${path}" AND NOT IS_SYMLINK "${path}")
         return()
     endif()
 
     set(_bytes 0)
-    if(IS_DIRECTORY "${path}")
+    if(IS_DIRECTORY "${path}" AND NOT IS_SYMLINK "${path}")
         file(GLOB_RECURSE _inner LIST_DIRECTORIES false "${path}/*")
         foreach(_f IN LISTS _inner)
+            if(IS_DIRECTORY "${_f}" OR IS_SYMLINK "${_f}" OR NOT EXISTS "${_f}")
+                continue()
+            endif()
             file(SIZE "${_f}" _size)
             math(EXPR _bytes "${_bytes} + ${_size}")
         endforeach()
-    else()
+    elseif(NOT IS_SYMLINK "${path}" AND EXISTS "${path}")
         file(SIZE "${path}" _bytes)
     endif()
 
