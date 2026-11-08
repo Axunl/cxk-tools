@@ -1104,6 +1104,7 @@ add_subdirectory(plugins/mytool)
 | 只改了 Linux 分支，本机（Windows）却「编过」了 | 平台分支在另外两个平台上根本不参与编译，本机通过不代表 CI 通过 | 改 `#if defined(Q_OS_LINUX)` 里的代码，交付说明必须写「本机无法验证，等 CI 首次运行」；沙箱禁 WSL/Docker 时没有本地替代方案 |
 | `build (macos)` 一步都没跑就 cancelled，annotation 只有 `The configuration 'macos-14-arm64-us-default' is not supported`，日志是空的 | `macos-14` 镜像已于 2026-11-02 从 GitHub Actions 退役：标签还在，但没有机器 | 换 `macos-15`（arm64）。看 `actions/runner-images` 的 Available Images 表确认当前标签，**别用 `-latest`** |
 | macOS 包在用户的旧系统上双击没反应，`Info.plist` 却写着 12.0 | 没设 `CMAKE_OSX_DEPLOYMENT_TARGET`，clang 按构建机系统版本当部署目标（runner 是 15/26 就要求 15/26） | 在 `project()` **之前**设 `CMAKE_OSX_DEPLOYMENT_TARGET`；`package-macos.sh` 会打印 `MINOS=`/`PLIST_MIN=` 并在不一致时告警 |
+| macOS 任务报 `line 1: ./scripts/build.sh: Permission denied` | 仓库在 Windows 上开发（`core.fileMode=false`），`.sh` 以 `100644` 提交，runner 上就没有可执行位 | 两处都做：`git update-index --chmod=+x scripts/*.sh` 补权限位；CI 里统一用 `bash scripts/x.sh`，不依赖权限位 |
 
 ---
 

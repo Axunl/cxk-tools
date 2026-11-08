@@ -149,15 +149,18 @@ jobs:
           arch: clang_64
           cache: true
 
+      # 用 `bash scripts/xxx` 而不是 `./scripts/xxx`：仓库在 Windows 上开发，core.fileMode
+      # 常常是 false，脚本很容易以 100644 提交（没有可执行位），checkout 到 runner 上就是
+      # ./scripts/build.sh: Permission denied。显式走 bash 就不依赖权限位。
       - name: Build
         env:
           QT_DIR: ${{ env.QT_ROOT_DIR }}
-        run: ./scripts/build.sh Release
+        run: bash scripts/build.sh Release
 
       - name: Package dmg
         env:
           MACDEPLOYQT: ${{ env.QT_ROOT_DIR }}/bin/macdeployqt
-        run: ./scripts/package-macos.sh build dist
+        run: bash scripts/package-macos.sh build dist
 
       - uses: actions/upload-artifact@v4
         with:
