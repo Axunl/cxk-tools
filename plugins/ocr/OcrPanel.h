@@ -19,6 +19,7 @@
 
 #include "OcrText.h"
 
+#include <QImage>
 #include <QPixmap>
 #include <QPointer>
 #include <QVector>
@@ -37,6 +38,10 @@ class OcrPanel : public QWidget
 public:
     explicit OcrPanel(QWidget *parent = nullptr);
     ~OcrPanel() override;
+
+    /// 宿主把首页搜索框里粘贴的图片带进来时调用：立刻识别，不等用户再点按钮。
+    /// 同步执行（与「剪贴板图片」按钮同一条路径），空图片直接忽略。
+    void setInputImage(const QImage &image);
 
 private:
     /// 隐藏宿主窗口后延时截图；延时是为了让桌面完成重绘，否则会截到主窗口残影。

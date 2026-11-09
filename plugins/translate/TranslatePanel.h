@@ -44,6 +44,10 @@ public:
     explicit TranslatePanel(QWidget *parent = nullptr);
     ~TranslatePanel() override;
 
+    /// 宿主把首页搜索框里的英文带进来时调用：填进输入框并立刻翻译。
+    /// 空文本直接忽略（不会触发请求）。
+    void setInputText(const QString &text);
+
 protected:
     /// 面板一显示就把焦点放进输入框。同步 setFocus 会被宿主的焦点链覆盖，
     /// 必须延后一拍（与 JsonFmtPanel::showEvent 同一处理）。

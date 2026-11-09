@@ -11,6 +11,7 @@
 #include "WindowGeometry.h"
 
 #include <QCloseEvent>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
 #include <QHBoxLayout>
@@ -176,6 +177,9 @@ void MainWindow::buildUi()
     connect(m_popoutBtn, &QPushButton::clicked, this, [this] { popOutTool(m_currentToolId); });
 
     connect(m_home, &HomePage::toolActivated, this, [this](const QString &id) { showTool(id); });
+    // 建议条打开工具时会带内容（JSON 原文 / 粘贴的图片 / 待翻译英文）
+    connect(m_home, &HomePage::toolActivatedWithInput, this,
+            [this](const QString &id, const xtools::ToolInput &input) { showTool(id, true, input); });
     connect(m_home, &HomePage::toolPopOutRequested, this, &MainWindow::popOutTool);
     connect(m_home, &HomePage::appActivated, this, &MainWindow::launchLocalApp);
 
@@ -190,7 +194,7 @@ void MainWindow::buildUi()
     });
 }
 
-void MainWindow::createToolPanel(const QString &toolId)
+void MainWindow::createToolPanel(const QString &toolId, const xtools::ToolInput &input)
 {
     // 面板不缓存：每次进入工具都新建，输入过的值不留存。
     // ITool::createPanel 的接口契约本就要求"每次返回全新面板"，插件无需改动。
@@ -209,6 +213,22 @@ void MainWindow::createToolPanel(const QString &toolId)
     panel->setParent(m_stack);
     m_stack->addWidget(panel);
     m_toolPanel = panel;
+
+    // 面板已创建、尚未显示：此时把首页带进来的内容交给插件正合适
+    // （面板可以在 showEvent 里按已有内容排版/聚焦，用户看不到中间态）。
+    if (input.kind == xtools::ToolInput::Kind::None)
+        return;
+
+    // ITool 不是 QObject，但插件对象一定同时继承 QObject（QPluginLoader 只认 QObject），
+    // 先转成 QObject* 才能用 qobject_cast 查它有没有实现可选接口 IToolInput。
+    auto *object = dynamic_cast<QObject *>(entry->tool);
+    auto *receiver = object ? qobject_cast<xtools::IToolInput *>(object) : nullptr;
+    if (!receiver) {
+        // 旧插件不实现这个接口是合法状态：只打开工具、不带内容，不要当错误处理
+        qInfo() << "MainWindow: 工具不接受带入内容" << toolId;
+        return;
+    }
+    receiver->setToolInput(input);
 }
 
 void MainWindow::destroyToolPanel()
@@ -231,7 +251,7 @@ void MainWindow::showHome()
     m_home->focusSearch();
 }
 
-void MainWindow::showTool(const QString &toolId, bool countUsage)
+void MainWindow::showTool(const QString &toolId, bool countUsage, const xtools::ToolInput &input)
 {
     const ToolEntry *entry = m_registry->entryById(toolId);
     if (!entry)
@@ -239,7 +259,7 @@ void MainWindow::showTool(const QString &toolId, bool countUsage)
 
     // 离开当前工具视图即销毁面板；新工具一律全新面板
     destroyToolPanel();
-    createToolPanel(toolId);
+    createToolPanel(toolId, input);
     if (!m_toolPanel)
         return;
 

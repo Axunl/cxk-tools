@@ -26,5 +26,16 @@ QWidget *OcrPlugin::createPanel(QWidget *parent)
 {
     // 每次进入工具都返回全新面板（宿主不缓存面板，输入值不留存）；
     // 传进来的 parent 可能为 nullptr，宿主随后会 setParent 接管生命周期。
-    return new OcrPanel(parent);
+    auto *panel = new OcrPanel(parent);
+    m_panel = panel;   // 记住这一个，紧接着的 setToolInput() 要往里塞图片
+    return panel;
+}
+
+void OcrPlugin::setToolInput(const xtools::ToolInput &input)
+{
+    // 只在宿主刚创建完面板时被调用；m_panel 已失效（宿主已销毁）就什么也不做。
+    // 文本输入与本工具无关，静默忽略。
+    if (!m_panel || input.kind != xtools::ToolInput::Kind::Image)
+        return;
+    m_panel->setInputImage(input.image);
 }

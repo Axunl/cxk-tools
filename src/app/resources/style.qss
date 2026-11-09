@@ -1,49 +1,55 @@
 /* ===========================================================================
-   全局样式表（浅色主题）
+   全局样式表（浅色 / 深色共用一份模板）
    ---------------------------------------------------------------------------
    规则：
      * 只通过 objectName / 属性选择器定位控件，代码里不写内联样式，
        主题调整集中在这一个文件；
-     * 强调按钮统一用属性 accent=true（见下方 QPushButton[accent="true"]），
+     * 强调按钮统一用属性 accent=true（见下方 QPushButton[accent=true]），
        不要在业务代码里 setStyleSheet 调色；
+     * 颜色一律写 @令牌，不要写死十六进制。运行期由 Theme 按当前主题把
+       @令牌 换成具体色值（浅色/深色的取值在 src/api/ThemePalette.h 的
+       table() 里，改色只改那一处）。写死颜色的后果是切到深色后这里仍是
+       浅色，且不会报错——只有肉眼看得到；
+     * 两套主题都保持同一套尺寸/圆角/间距：换肤只换颜色，不换骨架，
+       否则两边的对齐会各修一遍；
      * 尺寸按逻辑像素写，Qt 会按屏幕 DPR 自动缩放。
    =========================================================================== */
 
 QWidget {
     font-family: "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
     font-size: 13px;
-    color: #0F172A;
+    color: @text;
 }
 
 /* ---------------------------------------------------------------- 根容器 */
-/* 主界面底色统一为纯白：卡片（QGroupBox / 各工具的白底卡）靠 #E2E8F0 细边框
-   与底色区分，不再依赖"灰底烘托白卡"的层次。新增页面级容器也要跟着用 #FFFFFF，
+/* 主界面底色统一为纯白：卡片（QGroupBox / 各工具的白底卡）靠 @border 细边框
+   与底色区分，不再依赖"灰底烘托白卡"的层次。新增页面级容器也要跟着用 @bg，
    否则切换页面时会露出色差。 */
 #mainRoot {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
 }
 
 /* ---------------------------------------------------------------- 标题栏 */
 #titleBar {
-    background: #FFFFFF;
+    background: @bg;
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
-    border-bottom: 1px solid #E8EDF5;
+    border-bottom: 1px solid @border-subtle;
 }
 
 #titleText {
     font-size: 13px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 #titleHotkey {
     font-size: 11px;
-    color: #94A3B8;
-    background: #F1F5F9;
-    border: 1px solid #E2E8F0;
+    color: @text-faint;
+    background: @bg-subtle;
+    border: 1px solid @border;
     border-radius: 9px;
     padding: 1px 8px;
 }
@@ -54,7 +60,7 @@ QPushButton#titleBtnClose {
     background: transparent;
     border: none;
     border-radius: 6px;
-    color: #475569;
+    color: @text-second;
     font-size: 16px;
     /* 必须清零：全局 QPushButton 有 padding: 6px 14px，
        在 30px 宽的按钮里会把文字挤到没有空间，只剩一个小点。 */
@@ -64,38 +70,38 @@ QPushButton#titleBtnClose {
 
 QPushButton#titleBtn:hover,
 QPushButton#titleBtnSettings:hover {
-    background: #F1F5F9;
-    color: #0F172A;
+    background: @bg-subtle;
+    color: @text;
 }
 
 QPushButton#titleBtnClose:hover {
-    background: #EF4444;
-    color: #FFFFFF;
+    background: @danger-strong;
+    color: @on-accent;
 }
 
 /* ---------------------------------------------------------------- 首页网格 */
 /* 首页与页头都是页面级容器，底色随 #mainRoot 一起走白 */
 #homeRoot {
-    background: #FFFFFF;
+    background: @bg;
 }
 
 #homeTop {
-    background: #FFFFFF;
+    background: @bg;
 }
 
 QLineEdit#homeSearch {
     /* 右侧 padding 给清空按钮让位，文字不会滑到按钮底下 */
     padding: 8px 36px 8px 12px;
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 9px;
-    color: #0F172A;
+    color: @text;
     font-size: 14px;
 }
 
 QLineEdit#homeSearch:focus {
-    border-color: #4F6BF6;
-    background: #FFFFFF;
+    border-color: @accent;
+    background: @bg;
 }
 
 /* 搜索框右内侧的清空按钮：几何由 HomePage 按尺寸实时摆位 */
@@ -103,17 +109,17 @@ QToolButton#homeSearchClear {
     border: none;
     border-radius: 10px;
     background: transparent;
-    color: #94A3B8;
+    color: @text-faint;
     font-size: 11px;
 }
 
 QToolButton#homeSearchClear:hover {
-    background: #E2E8F0;
-    color: #475569;
+    background: @border;
+    color: @text-second;
 }
 
 QToolButton#homeSearchClear:pressed {
-    background: #CBD5E1;
+    background: @scrollbar;
 }
 
 #homeScroll,
@@ -125,7 +131,7 @@ QToolButton#homeSearchClear:pressed {
 #sectionTitle {
     font-size: 12px;
     font-weight: 600;
-    color: #94A3B8;
+    color: @text-faint;
     padding: 8px 0 4px 2px;
 }
 
@@ -139,27 +145,60 @@ QToolButton#homeSearchClear:pressed {
 }
 
 #launcherTile[hovered="true"] {
-    background: #EEF2FF;
+    background: @accent-soft;
 }
 
 #launcherTile[current="true"] {
-    background: #E6EBFF;
-    border-color: #C7D2FE;
+    background: @accent-soft-strong;
+    border-color: @border-accent;
 }
 
 #tileName {
     font-size: 12px;
-    color: #334155;
+    color: @text-body;
+}
+
+/* 搜索建议条（IntentBanner）：贴进 JSON / 图片，或英文没搜到时的「交给哪个工具」。
+   整条可点，所以 hover 要给明确反馈；默认态用极浅的靛蓝底与搜索结果区分开。 */
+#intentBanner {
+    background: @accent-tint;
+    border: 1px solid @border-accent;
+    border-radius: 10px;
+}
+
+#intentBanner[hovered="true"] {
+    background: @accent-soft;
+    border-color: @border-accent-strong;
+}
+
+#intentTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: @text;
+}
+
+#intentDetail {
+    font-size: 12px;
+    color: @text-muted;
+}
+
+#intentHint {
+    font-size: 11px;
+    color: @accent;
+    background: @bg;
+    border: 1px solid @border-accent;
+    border-radius: 6px;
+    padding: 3px 8px;
 }
 
 #homeFooter {
-    color: #94A3B8;
+    color: @text-faint;
     font-size: 11px;
     padding: 4px 28px 10px 28px;
 }
 
 #homeHint {
-    color: #94A3B8;
+    color: @text-faint;
     font-size: 12px;
     padding: 24px 0;
 }
@@ -167,37 +206,37 @@ QToolButton#homeSearchClear:pressed {
 #homeEmptyTitle {
     font-size: 15px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 #homeEmptyDesc {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 /* ---------------------------------------------------------------- 页头 */
 #pageHeader {
-    background: #FFFFFF;
-    border-bottom: 1px solid #E8EDF5;
+    background: @bg;
+    border-bottom: 1px solid @border-subtle;
 }
 
 QPushButton#pageBack {
     background: transparent;
     border: none;
-    color: #475569;
+    color: @text-second;
     font-size: 12px;
     padding: 4px 8px;
 }
 
 QPushButton#pageBack:hover {
-    background: #F1F5F9;
-    color: #0F172A;
+    background: @bg-subtle;
+    color: @text;
     border-radius: 6px;
 }
 
 QPushButton#pagePopout {
-    background: #FFFFFF;
-    border: 1px solid #D7DEE9;
+    background: @bg;
+    border: 1px solid @border-strong;
     font-size: 12px;
     padding: 4px 10px;
 }
@@ -205,29 +244,29 @@ QPushButton#pagePopout {
 #toolTitle {
     font-size: 16px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 #toolDesc {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #toolStack {
-    background: #FFFFFF;
+    background: @bg;
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
 }
 
 /* 独立窗口：外面是系统边框，内容区只负责底色，不要再套圆角 */
 #toolWindowRoot {
-    background: #FFFFFF;
+    background: @bg;
 }
 
 /* ---------------------------------------------------------------- 分组框 */
 QGroupBox {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
     margin-top: 14px;
 }
@@ -238,75 +277,75 @@ QGroupBox::title {
     left: 14px;
     top: 0px;
     padding: 0 4px;
-    color: #475569;
+    color: @text-second;
     font-size: 12px;
     font-weight: 600;
     /* 标题压在边框上，底色必须等于页面底色才能把边框"割"开。
        页面底色改白后这里也必须是白，否则标题后面会挂一块灰斑。 */
-    background: #FFFFFF;
+    background: @bg;
 }
 
 /* ---------------------------------------------------------------- 按钮 */
 QPushButton {
-    background: #FFFFFF;
-    border: 1px solid #D7DEE9;
+    background: @bg;
+    border: 1px solid @border-strong;
     border-radius: 7px;
     padding: 6px 14px;
     min-height: 20px;
-    color: #334155;
+    color: @text-body;
 }
 
 QPushButton:hover {
-    background: #F5F8FD;
-    border-color: #C3CEDD;
+    background: @bg-hover;
+    border-color: @border-hover;
 }
 
 QPushButton:pressed {
-    background: #EBF1F9;
+    background: @bg-pressed;
 }
 
 /* 置灰态：默认的 disabled 外观在浅色主题上几乎看不出区别（内存监控的「释放选中」
    在没选中行时靠它表示不可点） */
 QPushButton:disabled {
-    background: #F8FAFC;
-    border-color: #E8EDF5;
-    color: #A8B3C2;
+    background: @bg-alt;
+    border-color: @border-subtle;
+    color: @text-disabled;
 }
 
 QPushButton[accent="true"] {
-    background: #4F6BF6;
-    border: 1px solid #4F6BF6;
-    color: #FFFFFF;
+    background: @accent;
+    border: 1px solid @accent;
+    color: @on-accent;
     font-weight: 600;
 }
 
 QPushButton[accent="true"]:hover {
-    background: #4360EE;
-    border-color: #4360EE;
+    background: @accent-hover;
+    border-color: @accent-hover;
 }
 
 /* ---------------------------------------------------------------- 输入类 */
 QLineEdit {
-    background: #FFFFFF;
-    border: 1px solid #D7DEE9;
+    background: @bg;
+    border: 1px solid @border-strong;
     border-radius: 7px;
     padding: 6px 10px;
-    selection-background-color: #4F6BF6;
-    selection-color: #FFFFFF;
+    selection-background-color: @accent;
+    selection-color: @on-accent;
 }
 
 QLineEdit:focus {
-    border-color: #4F6BF6;
+    border-color: @accent;
 }
 
 QPlainTextEdit,
 QTextEdit {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 8px;
     padding: 8px;
-    selection-background-color: #4F6BF6;
-    selection-color: #FFFFFF;
+    selection-background-color: @accent;
+    selection-color: @on-accent;
 }
 
 /* JSON 编辑器的键名补全弹窗。
@@ -315,27 +354,27 @@ QTextEdit {
    注意不要给 view 加 padding：item view 的 padding 会把 viewport 撑得比内容还小，
    明明只三五条候选也会常驻一根竖向滚动条（试过）。留白交给 item 的 padding。 */
 QAbstractItemView#jsonCompleterPopup {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 8px;
     outline: none;
-    selection-background-color: #EEF2FF;
-    selection-color: #0F172A;
+    selection-background-color: @accent-soft;
+    selection-color: @text;
 }
 
 QAbstractItemView#jsonCompleterPopup::item {
     min-height: 26px;
     padding: 0 10px;
-    color: #0F172A;
+    color: @text;
 }
 
 QAbstractItemView#jsonCompleterPopup::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 QCheckBox {
-    color: #334155;
+    color: @text-body;
     spacing: 8px;
 }
 
@@ -345,12 +384,12 @@ QCheckBox {
    别在 qss 里给子控件配 image/background-image：image 会被当成当前项图标重复画到
    文字后面，background-image 则整片平铺，两种都试过、都不对。 */
 QComboBox {
-    background: #FFFFFF;
-    border: 1px solid #D7DEE9;
+    background: @bg;
+    border: 1px solid @border-strong;
     border-radius: 7px;
     padding: 5px 24px 5px 10px;
     min-height: 20px;
-    color: #334155;
+    color: @text-body;
 }
 
 QComboBox::drop-down {
@@ -362,19 +401,19 @@ QComboBox::drop-down {
 }
 
 QComboBox:disabled {
-    background: #F8FAFC;
-    border-color: #E8EDF5;
-    color: #A8B3C2;
+    background: @bg-alt;
+    border-color: @border-subtle;
+    color: @text-disabled;
 }
 
 QComboBox QAbstractItemView {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 8px;
     outline: none;
     padding: 4px;
-    selection-background-color: #EEF2FF;
-    selection-color: #1D4ED8;
+    selection-background-color: @accent-soft;
+    selection-color: @accent-text;
 }
 
 /* ---------------------------------------------------------------- 滚动条 */
@@ -385,13 +424,13 @@ QScrollBar:vertical {
 }
 
 QScrollBar::handle:vertical {
-    background: #CBD5E1;
+    background: @scrollbar;
     border-radius: 4px;
     min-height: 28px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: #A9B7C9;
+    background: @scrollbar-hover;
 }
 
 /* 上下箭头和空白页不要画出来（默认会留出方块的占位） */
@@ -406,9 +445,61 @@ QScrollBar::sub-page:vertical {
     background: transparent;
 }
 
+/* ---------------------------------------------------------------- 设置/更新对话框 */
+/* 这些文字以前在代码里用 setStyleSheet 写死颜色，切主题时不会跟着变。
+   统一挂到 objectName 上：颜色只在这里定义，状态色用动态属性 state
+   （ok / error / 空），代码里只 setProperty 再 unpolish/polish。 */
+QLabel#hint {
+    color: @text-faint;
+    font-size: 12px;
+}
+
+QLabel#hint[state="ok"] {
+    color: @success;
+}
+
+QLabel#hint[state="error"] {
+    color: @danger;
+}
+
+QLabel#settingsValue {
+    color: @text-second;
+    font-size: 12px;
+}
+
+QLabel#settingsError {
+    color: @danger;
+    font-size: 12px;
+}
+
+QLabel#settingsVersion {
+    color: @text;
+    font-weight: 600;
+}
+
+QLabel#updateTitle {
+    color: @text;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+QLabel#updateSubtitle {
+    color: @text-faint;
+    font-size: 12px;
+}
+
+QLabel#updateStatus {
+    color: @text-faint;
+    font-size: 12px;
+}
+
+QLabel#updateStatus[state="error"] {
+    color: @danger;
+}
+
 /* ---------------------------------------------------------------- 其他 */
 QSplitter::handle {
-    background: #E8EDF5;
+    background: @border-subtle;
 }
 
 QSplitter::handle:horizontal {
@@ -416,8 +507,8 @@ QSplitter::handle:horizontal {
 }
 
 QToolTip {
-    background: #0F172A;
-    color: #F8FAFC;
+    background: @tooltip-bg;
+    color: @tooltip-text;
     border: none;
     padding: 4px 8px;
 }
@@ -425,64 +516,64 @@ QToolTip {
 /* ---------------------------------------------------------------- 内存监控 */
 /* 概览卡：白底 + 细边框，与设置页的 QGroupBox 同一套观感 */
 #memCard {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
 }
 
 #memCaption {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #memPercent {
     font-size: 30px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 /* 占用越高越刺眼：80% 起橙色、90% 起红色（阈值见 MemText.h 的 levelFor） */
 #memPercent[level="warn"] {
-    color: #B45309;
+    color: @warn-text;
 }
 
 #memPercent[level="danger"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 #memUsed {
     font-size: 13px;
-    color: #334155;
+    color: @text-body;
 }
 
 #memAvail {
     font-size: 13px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 #memReleased {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 QProgressBar#memBar {
-    background: #EEF2F6;
+    background: @bg-track;
     border: none;
     border-radius: 3px;
 }
 
 QProgressBar#memBar::chunk {
-    background: #4F6BF6;
+    background: @accent;
     border-radius: 3px;
 }
 
 QProgressBar#memBar[level="warn"]::chunk {
-    background: #F59E0B;
+    background: @warn;
 }
 
 QProgressBar#memBar[level="danger"]::chunk {
-    background: #EF4444;
+    background: @danger-strong;
 }
 
 QLineEdit#memSearch {
@@ -492,60 +583,60 @@ QLineEdit#memSearch {
 /* 进程表。注意只给 ::item 加左右 padding —— 给 view 本身加 padding 会把 viewport
    撑得比内容还小，明明没几行也会常驻滚动条（补全弹窗踩过同一个坑）。 */
 QTreeWidget#memTable {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
     outline: none;
 }
 
 QTreeWidget#memTable::item {
     padding: 0px 10px;
-    color: #334155;
-    border-bottom: 1px solid #F1F5F9;
+    color: @text-body;
+    border-bottom: 1px solid @bg-subtle;
 }
 
 QTreeWidget#memTable::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 QTreeWidget#memTable QHeaderView::section {
-    background: #F8FAFC;
-    color: #64748B;
+    background: @bg-alt;
+    color: @text-muted;
     font-size: 12px;
     font-weight: 600;
     border: none;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid @border;
     padding: 0px 10px;
 }
 
 #memStatus {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #memStatus[state="warn"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 #memHint {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 /* ---------------------------------------------------------------- 文件占用释放 */
 /* 白底卡片包住路径行 / 拖拽区 / 按钮 / 结果表，底部状态栏单独一条 */
 #flCard,
 #flFooter {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
 }
 
 #flPathLabel {
     font-size: 13px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 QLineEdit#flPath {
@@ -566,67 +657,67 @@ QPushButton#flTerminate {
 /* 禁用时主按钮要盖掉 accent 蓝色，否则「检测中」看起来还能点。
    限定到 #flDetect：其他工具也用 accent 属性，别顺手改了它们的禁用态。 */
 QPushButton#flDetect:disabled {
-    background: #A9B8F8;
-    border-color: #A9B8F8;
-    color: #FFFFFF;
+    background: @accent-disabled;
+    border-color: @accent-disabled;
+    color: @on-accent;
 }
 
 /* 拖拽区：QFrame 子类要 WA_StyledBackground 才画样式背景（见 FileLockPanel.cpp）。
    hover 用动态属性而非 :hover，理由同首页磁贴。 */
 #flDropZone {
-    background: #F8FBFF;
-    border: 2px dashed #A9C0FF;
+    background: @accent-tint;
+    border: 2px dashed @border-accent-soft;
     border-radius: 10px;
 }
 
 #flDropZone[hovered="true"] {
-    background: #EEF4FF;
-    border-color: #4F6BF6;
+    background: @accent-soft;
+    border-color: @accent;
 }
 
 #flDropTitle {
     font-size: 16px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
     background: transparent;
 }
 
 #flDropHint {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
     background: transparent;
 }
 
 QTableWidget#flTable {
-    background: #FFFFFF;
-    border: 1px solid #E8EDF5;
+    background: @bg;
+    border: 1px solid @border-subtle;
     border-radius: 8px;
     outline: none;
-    gridline-color: #F1F5F9;
+    gridline-color: @bg-subtle;
 }
 
 QTableWidget#flTable::item {
     padding: 0px 8px;
-    color: #334155;
+    color: @text-body;
 }
 
 QTableWidget#flTable::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 QTableWidget#flTable QHeaderView::section {
-    background: #FFFFFF;
-    color: #64748B;
+    background: @bg;
+    color: @text-muted;
     font-size: 12px;
     font-weight: 600;
     border: none;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid @border;
     padding: 0px 8px;
 }
 
 QTableWidget#flTable QTableCornerButton::section {
-    background: #FFFFFF;
+    background: @bg;
     border: none;
 }
 
@@ -634,61 +725,61 @@ QPushButton#flRowAction {
     padding: 2px 10px;
     min-height: 0px;
     font-size: 12px;
-    color: #DC2626;
-    border-color: #F3C9C9;
+    color: @danger;
+    border-color: @border-danger;
 }
 
 QPushButton#flRowAction:hover {
-    background: #FEF2F2;
-    border-color: #EF4444;
+    background: @danger-bg;
+    border-color: @danger-strong;
 }
 
 #flEmpty {
-    background: #FFFFFF;
-    border: 1px solid #E8EDF5;
+    background: @bg;
+    border: 1px solid @border-subtle;
     border-radius: 8px;
-    color: #94A3B8;
+    color: @text-faint;
     font-size: 13px;
     line-height: 22px;
 }
 
 #flStatusDot {
     border-radius: 5px;
-    background: #10B981;
+    background: @success;
 }
 
 #flStatusDot[state="warn"] {
-    background: #EF4444;
+    background: @danger-strong;
 }
 
 #flStatusDot[state="busy"] {
-    background: #4F6BF6;
+    background: @accent;
 }
 
 #flStatus {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #flStatus[state="warn"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 #flStatus[state="busy"] {
-    color: #4F6BF6;
+    color: @accent;
 }
 
 #flDivider,
 #flSelected {
-    color: #94A3B8;
+    color: @text-faint;
     font-size: 12px;
 }
 
 /* 浏览菜单与内存监控的右键菜单共用：不写的话 Qt 给的是系统默认灰菜单，
    和卡片式浅色界面完全不搭 */
 QMenu {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 8px;
     padding: 4px;
 }
@@ -696,17 +787,17 @@ QMenu {
 QMenu::item {
     padding: 6px 18px;
     border-radius: 5px;
-    color: #334155;
+    color: @text-body;
 }
 
 QMenu::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 QMenu::separator {
     height: 1px;
-    background: #E8EDF5;
+    background: @border-subtle;
     margin: 4px 6px;
 }
 
@@ -730,66 +821,66 @@ QPushButton#transSwap {
    说明行在代码里设了 QSizePolicy::Ignored，窄窗口裁字也不撑大窗口最小宽度。 */
 #transEngineLabel {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #transEngineHint {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #transCount {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #transStatus {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 /* 状态三态走动态属性：面板 setProperty("state", ...) 后 unpolish/polish 重算样式 */
 #transStatus[state="busy"] {
-    color: #4F6BF6;
+    color: @accent;
 }
 
 #transStatus[state="error"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 /* ---------------------------------------------------------------- 取色器 */
 /* 右侧格式卡：与设置页 QGroupBox / 内存概览卡同一套白底细边框观感。
    QWidget 子类必须显式开 WA_StyledBackground 才会绘制 qss 背景（见 ColorPickerPanel）。 */
 #cpCard {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
 }
 
 #cpCardTitle {
     font-size: 12px;
     font-weight: 600;
-    color: #475569;
+    color: @text-second;
 }
 
 #cpCaption {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #cpFieldName {
     font-size: 12px;
     font-weight: 600;
-    color: #64748B;
+    color: @text-muted;
 }
 
 /* 只读格式值用等宽字体：HEX / rgb() 的数字对齐后更容易肉眼比对。 */
 QLineEdit#cpFieldValue {
     font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
     font-size: 12px;
-    color: #0F172A;
-    background: #F8FAFC;
-    border: 1px solid #E8EDF5;
+    color: @text;
+    background: @bg-alt;
+    border: 1px solid @border-subtle;
     padding: 4px 8px;
 }
 
@@ -804,24 +895,24 @@ QPushButton#cpSmallBtn {
 
 #cpStatus {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #cpStatus[state="error"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 #cpHint {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 /* 吸管浮窗：跟随鼠标的小放大镜窗口。半透明白底 + 细边 + 阴影，既能看清放大镜，
    又不完全盖住下面的屏幕内容。QWidget 需要 WA_StyledBackground 才画 qss 背景
    （EyedropperWindow 构造里已开）。 */
 #cpEyedropper {
-    background: rgba(255, 255, 255, 235);
-    border: 1px solid #CBD5E1;
+    background: @overlay;
+    border: 1px solid @scrollbar;
     border-radius: 10px;
 }
 
@@ -830,7 +921,7 @@ QPushButton#cpSmallBtn {
     font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
     font-size: 13px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 /* ---------------------------------------------------------------- Cron 表达式 */
@@ -850,26 +941,26 @@ QPushButton#cronCopyBtn {
 #cronDesc {
     font-size: 13px;
     font-weight: 600;
-    color: #0F172A;
+    color: @text;
 }
 
 #cronStatus {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #cronStatus[state="ok"] {
-    color: #10B981;
+    color: @success;
 }
 
 #cronStatus[state="error"] {
-    color: #DC2626;
+    color: @danger;
 }
 
 #cronSectionTitle {
     font-size: 12px;
     font-weight: 600;
-    color: #94A3B8;
+    color: @text-faint;
     padding-top: 2px;
 }
 
@@ -891,34 +982,34 @@ QPushButton#cronFieldChip {
     padding: 2px 4px;
     min-height: 0px;
     font-size: 11px;
-    border: 1px solid #E2E8F0;
+    border: 1px solid @border;
     border-radius: 8px;
-    background: #FFFFFF;
-    color: #475569;
+    background: @bg;
+    color: @text-second;
 }
 
 QPushButton#cronFieldChip:checked {
-    background: #0F766E;
-    border-color: #0F766E;
-    color: #FFFFFF;
+    background: @teal;
+    border-color: @teal;
+    color: @on-accent;
     font-weight: 600;
 }
 
 #cronFieldTitle {
     font-size: 12px;
     font-weight: 600;
-    color: #334155;
+    color: @text-body;
 }
 
 #cronEditorHint {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 QRadioButton#cronKindRadio {
     font-size: 12px;
     spacing: 4px;
-    color: #334155;
+    color: @text-body;
 }
 
 /* 值网格按钮：选中态用同一套深青，扫一眼就知道勾了哪些 */
@@ -926,22 +1017,22 @@ QPushButton#cronValueBtn {
     padding: 2px;
     min-height: 0px;
     font-size: 11px;
-    border: 1px solid #E2E8F0;
+    border: 1px solid @border;
     border-radius: 6px;
-    background: #FFFFFF;
-    color: #475569;
+    background: @bg;
+    color: @text-second;
 }
 
 QPushButton#cronValueBtn:checked {
-    background: #0F766E;
-    border-color: #0F766E;
-    color: #FFFFFF;
+    background: @teal;
+    border-color: @teal;
+    color: @on-accent;
 }
 
 QScrollArea#cronValuesScroll {
-    border: 1px solid #E2E8F0;
+    border: 1px solid @border;
     border-radius: 8px;
-    background: #FFFFFF;
+    background: @bg;
 }
 
 /* 全选 / 清空 / 现在 一类小按钮 */
@@ -955,16 +1046,16 @@ QPushButton#cronMiniBtn {
    只给 ::item 加左右 padding，view 本身加 padding 会让 viewport 比内容小、
    5 行内容也常驻滚动条（json 补全弹窗踩过同一个坑）。 */
 QListWidget#cronNext {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 8px;
     outline: none;
 }
 
 QListWidget#cronNext::item {
     padding: 0px 10px;
-    color: #334155;
-    border-bottom: 1px solid #F1F5F9;
+    color: @text-body;
+    border-bottom: 1px solid @bg-subtle;
 }
 
 QListWidget#cronNext::item:last {
@@ -975,34 +1066,34 @@ QListWidget#cronNext::item:last {
 /* 地址卡与两张列表卡都是白底细边框，与内存概览卡 / 设置页同一套观感。
    QFrame 子类要 WA_StyledBackground 才画这里的背景（见 SharePanel.cpp）。 */
 #fsCard {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background: @bg;
+    border: 1px solid @border;
     border-radius: 10px;
 }
 
 #fsCaption {
     font-size: 12px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 #fsCardTitle {
     font-size: 13px;
     font-weight: 600;
-    color: #334155;
+    color: @text-body;
 }
 
 #fsHint {
     font-size: 11px;
-    color: #94A3B8;
+    color: @text-faint;
 }
 
 /* 共享地址是只读的，用等宽字体便于一眼核对 IP 与端口 */
 QLineEdit#fsUrl {
     font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
     font-size: 13px;
-    color: #4F6BF6;
-    background: #F8FAFC;
-    border: 1px solid #E8EDF5;
+    color: @accent;
+    background: @bg-alt;
+    border: 1px solid @border-subtle;
     border-radius: 7px;
     padding: 5px 10px;
 }
@@ -1010,28 +1101,28 @@ QLineEdit#fsUrl {
 /* 状态点：绿 = 正在共享，红 = 未启动 */
 #fsDot {
     border-radius: 4px;
-    background: #10B981;
+    background: @success;
 }
 
 #fsDot[state="off"] {
-    background: #EF4444;
+    background: @danger-strong;
 }
 
 /* 状态胶囊 */
 #fsBadge {
     font-size: 11px;
     font-weight: 600;
-    color: #047857;
-    background: #ECFDF5;
-    border: 1px solid #A7F3D0;
+    color: @success-text;
+    background: @success-bg;
+    border: 1px solid @success-border;
     border-radius: 9px;
     padding: 2px 9px;
 }
 
 #fsBadge[state="off"] {
-    color: #B91C1C;
-    background: #FEF2F2;
-    border-color: #FECACA;
+    color: @danger-text;
+    background: @danger-bg;
+    border-color: @border-danger;
 }
 
 /* 卡片工具栏里的小按钮：全局 QPushButton 的 padding 是 6px 14px，
@@ -1058,8 +1149,8 @@ QPushButton#fsSwitch::menu-indicator {
 
 /* 共享文件表：行高靠 ::item 的 min-height，别指望 ::item padding 撑高度 */
 QTreeWidget#fsFileList {
-    background: #FFFFFF;
-    border: 1px solid #E8EDF5;
+    background: @bg;
+    border: 1px solid @border-subtle;
     border-radius: 8px;
     outline: none;
 }
@@ -1067,28 +1158,28 @@ QTreeWidget#fsFileList {
 QTreeWidget#fsFileList::item {
     min-height: 26px;
     padding: 0px 6px;
-    color: #334155;
+    color: @text-body;
 }
 
 QTreeWidget#fsFileList::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 QTreeWidget#fsFileList QHeaderView::section {
-    background: #FFFFFF;
-    color: #64748B;
+    background: @bg;
+    color: @text-muted;
     font-size: 11px;
     font-weight: 600;
     border: none;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid @border;
     padding: 4px 6px;
 }
 
 /* 共享文本列表：单行摘要 + 悬停看全文 */
 QListWidget#fsTextList {
-    background: #FFFFFF;
-    border: 1px solid #E8EDF5;
+    background: @bg;
+    border: 1px solid @border-subtle;
     border-radius: 8px;
     outline: none;
 }
@@ -1096,21 +1187,21 @@ QListWidget#fsTextList {
 QListWidget#fsTextList::item {
     min-height: 26px;
     padding: 0px 8px;
-    color: #334155;
-    border-bottom: 1px solid #F1F5F9;
+    color: @text-body;
+    border-bottom: 1px solid @bg-subtle;
 }
 
 QListWidget#fsTextList::item:selected {
-    background: #EEF2FF;
-    color: #1D4ED8;
+    background: @accent-soft;
+    color: @accent-text;
 }
 
 #fsStatus {
     font-size: 12px;
-    color: #64748B;
+    color: @text-muted;
 }
 
 #fsStatus[state="error"] {
-    color: #DC2626;
+    color: @danger;
 }
 

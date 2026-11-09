@@ -15,10 +15,13 @@ set(APP_SOURCES
     core/LocalAppIndex.h
     core/PluginManager.cpp
     core/PluginManager.h
+    core/QueryIntent.h
     core/Settings.cpp
     core/Settings.h
     core/SingleInstance.cpp
     core/SingleInstance.h
+    core/Theme.cpp
+    core/Theme.h
     core/ToolRegistry.cpp
     core/ToolRegistry.h
     core/UpdateChecker.cpp

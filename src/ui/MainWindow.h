@@ -17,6 +17,8 @@
 //     真正退出必须先 prepareQuit()，否则会被 closeEvent 拦下。
 // ---------------------------------------------------------------------------
 
+#include "IToolInput.h"
+
 #include <QHash>
 #include <QKeySequence>
 #include <QMainWindow>
@@ -49,7 +51,10 @@ public:
 
     /// 在主窗口内打开指定工具。
     /// @param countUsage 只有用户主动打开才累计频次与最近使用；程序内恢复传 false。
-    void showTool(const QString &toolId, bool countUsage = true);
+    /// @param input 首页建议带进来的内容（JSON / 图片 / 待翻译文本）。
+    ///              非空时要求插件实现了可选的 IToolInput，否则只打开工具、不带内容。
+    void showTool(const QString &toolId, bool countUsage = true,
+                  const xtools::ToolInput &input = xtools::ToolInput());
 
     /// 把工具弹成独立窗口。已有该工具的窗口时不新建，只前台化。
     void popOutTool(const QString &toolId);
@@ -87,7 +92,7 @@ protected:
 
 private:
     void buildUi();
-    void createToolPanel(const QString &toolId);
+    void createToolPanel(const QString &toolId, const xtools::ToolInput &input);
     void destroyToolPanel();
     void updateHeader(const QString &title, const QString &desc);
     /// 记录一次「用户主动打开了这个工具」：频次 + 首页的最近使用。

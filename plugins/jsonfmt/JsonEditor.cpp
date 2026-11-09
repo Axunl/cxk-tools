@@ -1,5 +1,7 @@
 #include "JsonEditor.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "JsonHighlighter.h"
 #include "JsonText.h"   // 纯逻辑：字符串边界、前缀扫描、键收集、折叠区扫描
 
@@ -210,7 +212,8 @@ void JsonEditor::applyErrorSelection()
     QList<QTextEdit::ExtraSelection> selections;
     if (m_errorLine >= 0 && m_errorLine < document()->blockCount()) {
         QTextEdit::ExtraSelection selection;
-        selection.format.setBackground(QColor(QStringLiteral("#FEE2E2")));
+        selection.format.setBackground(
+            xtools::theme::color(xtools::theme::Color::JsonErrorBg));
         // FullWidthSelection：整行铺满，而不是只涂有字的宽度
         selection.format.setProperty(QTextFormat::FullWidthSelection, true);
         selection.cursor = QTextCursor(document()->findBlockByNumber(m_errorLine));
@@ -292,9 +295,9 @@ void JsonEditor::updateGutter(const QRect &rect, int dy)
 void JsonEditor::gutterPaintEvent(QPaintEvent *event)
 {
     QPainter painter(m_gutter);
-    // 底色比正文略灰：既能和工具栏的白底分开，又不至于抢视线
-    painter.fillRect(event->rect(), QColor(QStringLiteral("#FBFCFD")));
-    painter.setPen(QColor(QStringLiteral("#EEF2F7")));
+    // 底色比正文略灰：既能和工具栏的主表面分开，又不至于抢视线
+    painter.fillRect(event->rect(), xtools::theme::color(xtools::theme::Color::GutterBg));
+    painter.setPen(xtools::theme::color(xtools::theme::Color::BorderSubtle));
     painter.drawLine(m_gutter->width() - 1, event->rect().top(),
                      m_gutter->width() - 1, event->rect().bottom());
 
@@ -308,8 +311,9 @@ void JsonEditor::gutterPaintEvent(QPaintEvent *event)
 
     while (block.isValid() && top <= event->rect().bottom()) {
         if (block.isVisible() && bottom >= event->rect().top() && bottom > top) {
-            painter.setPen(line == currentLine ? QColor(QStringLiteral("#334155"))
-                                              : QColor(QStringLiteral("#A3AEBD")));
+            painter.setPen(line == currentLine
+                               ? xtools::theme::color(xtools::theme::Color::GutterCurrent)
+                               : xtools::theme::color(xtools::theme::Color::GutterText));
             painter.drawText(QRect(kGutterPadLeft, top, numberRight - kGutterPadLeft, bottom - top),
                              Qt::AlignRight | Qt::AlignVCenter, QString::number(line + 1));
 
@@ -320,11 +324,12 @@ void JsonEditor::gutterPaintEvent(QPaintEvent *event)
                 const bool hovered = (line == m_hoverLine);
                 if (hovered) {
                     painter.setPen(Qt::NoPen);
-                    painter.setBrush(QColor(QStringLiteral("#E8EDFB")));
+                    painter.setBrush(xtools::theme::color(xtools::theme::Color::GutterHoverBg));
                     painter.drawRoundedRect(QRectF(box), 4, 4);
                 }
                 drawChevron(painter, box, !m_foldStarts.contains(line),
-                            hovered ? QColor(QStringLiteral("#1D4ED8")) : QColor(QStringLiteral("#94A3B8")));
+                            hovered ? xtools::theme::color(xtools::theme::Color::AccentText)
+                                    : xtools::theme::color(xtools::theme::Color::TextFaint));
             }
         }
         block = block.next();
@@ -567,9 +572,9 @@ void JsonEditor::paintFoldChips()
                              metrics.horizontalAdvance(label) + 14, height);
 
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(QStringLiteral("#EEF2FF")));
+            painter.setBrush(xtools::theme::color(xtools::theme::Color::AccentSoft));
             painter.drawRoundedRect(QRectF(chip), 4, 4);
-            painter.setPen(QColor(QStringLiteral("#64748B")));
+            painter.setPen(xtools::theme::color(xtools::theme::Color::TextMuted));
             painter.drawText(chip, Qt::AlignCenter, label);
 
             // 点击区比视觉范围略大一圈，好点一些

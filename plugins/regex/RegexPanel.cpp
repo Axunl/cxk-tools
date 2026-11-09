@@ -1,5 +1,7 @@
 #include "RegexPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include <QAbstractItemView>
 #include <QAction>
 #include <QCheckBox>
@@ -37,20 +39,20 @@ constexpr int kTimeBudgetMs = 1500;
 /// 真正要全文用「复制全部匹配」）。
 constexpr int kCellTextLimit = 160;
 
-/// 配色，集中定义避免各处写字面量漂移（与全局 qss 同一套浅色系）。
+/// 配色，集中定义避免各处写字面量漂移（与全局 qss 同一套语义令牌）。
 namespace palette {
-constexpr const char *hint = "#64748B";     // 常规提示
-constexpr const char *error = "#DC2626";    // 编译错误
-constexpr const char *ok = "#047857";       // 有匹配
-constexpr const char *matchBg = "#FDE68A";  // 全部匹配的底色（浅黄，白底上要能一眼看到）
-constexpr const char *currentBg = "#FBBF24"; // 当前定位那条的底色（深黄）
+constexpr auto hint = xtools::theme::Color::TextMuted;       // 常规提示
+constexpr auto error = xtools::theme::Color::Danger;         // 编译错误
+constexpr auto ok = xtools::theme::Color::SuccessText;       // 有匹配
+constexpr auto matchBg = xtools::theme::Color::MatchBg;      // 全部匹配的底色
+constexpr auto currentBg = xtools::theme::Color::MatchCurrentBg; // 当前定位那条的底色
 } // namespace palette
 
 /// 小节标题，与 TextKitPanel / WebSocketTool 同一号灰蓝小字。
 QLabel *makeCaption(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral("font-size:12px;font-weight:600;color:#64748B;"));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;font-weight:600;color:@text-muted;"));
     return label;
 }
 
@@ -58,32 +60,33 @@ QLabel *makeCaption(const QString &text, QWidget *parent)
 QLabel *makeHintLabel(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(palette::hint)));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;color:@%1;")
+                                     .arg(xtools::theme::tokenName(palette::hint)));
     return label;
 }
 
-/// 代码类编辑框统一外观：等宽字体 + 白底描边圆角。
-/// 插件面板不进全局 qss 的 objectName 规则，跟其它插件一样就地写内联样式。
+/// 代码类编辑框统一外观：等宽字体 + 描边圆角。
+/// 颜色写 @令牌：插件是独立动态库，换肤只能靠挂在控件上的模板重算。
 void styleMonoEdit(QPlainTextEdit *edit)
 {
     edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    edit->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;"
-        "padding:6px 8px;color:#0F172A;}"));
+    xtools::theme::applyStyle(edit, QStringLiteral(
+        "QPlainTextEdit{background:@bg;border:1px solid @border;border-radius:8px;"
+        "padding:6px 8px;color:@text;}"));
 }
 
 /// 结果表外观，与 filelock 的 #flTable 同一套观感（那边写在全局 qss 里，
 /// 这里就地内联，免得为了一个插件去改全局样式）。
 void styleTable(QTableWidget *table)
 {
-    table->setStyleSheet(QStringLiteral(
-        "QTableWidget{background:#FFFFFF;border:1px solid #E8EDF5;border-radius:8px;"
-        "outline:none;gridline-color:#F1F5F9;}"
-        "QTableWidget::item{padding:0px 8px;color:#334155;}"
-        "QTableWidget::item:selected{background:#EEF2FF;color:#1D4ED8;}"
-        "QHeaderView::section{background:#FFFFFF;color:#64748B;font-size:12px;font-weight:600;"
-        "border:none;border-bottom:1px solid #E2E8F0;padding:0px 8px;}"
-        "QTableCornerButton::section{background:#FFFFFF;border:none;}"));
+    xtools::theme::applyStyle(table, QStringLiteral(
+        "QTableWidget{background:@bg;border:1px solid @border-subtle;border-radius:8px;"
+        "outline:none;gridline-color:@bg-subtle;}"
+        "QTableWidget::item{padding:0px 8px;color:@text-body;}"
+        "QTableWidget::item:selected{background:@accent-soft;color:@accent-text;}"
+        "QHeaderView::section{background:@bg;color:@text-muted;font-size:12px;font-weight:600;"
+        "border:none;border-bottom:1px solid @border;padding:0px 8px;}"
+        "QTableCornerButton::section{background:@bg;border:none;}"));
 }
 
 /// 带提示的自绘复选框，省掉每个都写三行 setToolTip。
@@ -447,8 +450,8 @@ void RegexPanel::highlightMatches()
 
         QTextEdit::ExtraSelection selection;
         selection.cursor = cursor;
-        selection.format.setBackground(
-            QColor(QLatin1String(i == m_currentRow ? palette::currentBg : palette::matchBg)));
+        selection.format.setBackground(xtools::theme::color(
+            i == m_currentRow ? palette::currentBg : palette::matchBg));
         selections.append(selection);
     }
     m_subject->setExtraSelections(selections);
@@ -524,11 +527,12 @@ void RegexPanel::updateSubjectInfo()
 
 void RegexPanel::setStatus(const QString &text, StatusKind kind)
 {
-    const char *color = palette::hint;
+    xtools::theme::Color token = palette::hint;
     if (kind == StatusKind::Error)
-        color = palette::error;
+        token = palette::error;
     else if (kind == StatusKind::Ok)
-        color = palette::ok;
-    m_status->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(color)));
+        token = palette::ok;
+    xtools::theme::applyStyle(m_status, QStringLiteral("font-size:12px;color:@%1;")
+                                             .arg(xtools::theme::tokenName(token)));
     m_status->setText(text);
 }

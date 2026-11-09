@@ -1,6 +1,7 @@
 #include "JwtTool.h"
 
-#include "JwtLogic.h"   // 纯编解码/签名逻辑（可单独测试，见 AGENTS.md 的验证流程）
+#include "JwtLogic.h"
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）   // 纯编解码/签名逻辑（可单独测试，见 AGENTS.md 的验证流程）
 
 #include <QComboBox>
 #include <QFontDatabase>
@@ -21,12 +22,13 @@
 namespace {
 
 /// 状态栏 / 提示文字的颜色，集中定义避免各处写字面量漂移。
+/// 语义令牌（而不是色值）：深色主题下换的是色值，调用点不用动。
 namespace color {
-constexpr const char *error   = "#DC2626";   // 解析失败、校验失败
-constexpr const char *success = "#10B981";   // 校验通过、生成成功
-constexpr const char *hint    = "#94A3B8";   // 空闲提示
-constexpr const char *warn    = "#D97706";   // alg=none 等"可用但危险"
-constexpr const char *ink     = "#334155";   // 常规信息
+constexpr auto error   = xtools::theme::Color::Danger;      // 解析失败、校验失败
+constexpr auto success = xtools::theme::Color::Success;     // 校验通过、生成成功
+constexpr auto hint    = xtools::theme::Color::TextFaint;   // 空闲提示
+constexpr auto warn    = xtools::theme::Color::WarnStrong;  // alg=none 等"可用但危险"
+constexpr auto ink     = xtools::theme::Color::TextBody;    // 常规信息
 } // namespace color
 
 /// 算法下拉框右侧的小三角。
@@ -50,7 +52,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(isEnabled() ? QColor(0x94, 0xA3, 0xB8) : QColor(0xC0, 0xC9, 0xD6));
+        // 自绘小三角也得跟主题走：写死浅灰在深色底上几乎看不见
+        painter.setBrush(isEnabled() ? xtools::theme::color(xtools::theme::Color::TextFaint)
+                                     : xtools::theme::color(xtools::theme::Color::TextDisabled));
         QPainterPath path;
         path.moveTo(0.5, 2.0);
         path.lineTo(9.5, 2.0);
@@ -64,18 +68,19 @@ protected:
 QLabel *makeCaption(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral("font-size:12px;font-weight:600;color:#64748B;"));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;font-weight:600;color:@text-muted;"));
     return label;
 }
 
-/// 代码编辑区统一外观：等宽字体、白底描边圆角。
-/// （插件面板没有按 objectName 进全局 qss，跟 CalcPanel 一样就地写内联样式。）
+/// 代码编辑区统一外观：等宽字体、描边圆角。
+/// 颜色写 @令牌而不是字面量：插件是独立动态库，宿主换肤时只能靠这份模板重算
+/// （见 api/ThemePalette.h 的 applyStyle）。
 void styleCodeEditor(QPlainTextEdit *edit)
 {
     edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    edit->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;"
-        "padding:6px 8px;color:#0F172A;}"));
+    xtools::theme::applyStyle(edit, QStringLiteral(
+        "QPlainTextEdit{background:@bg;border:1px solid @border;border-radius:8px;"
+        "padding:6px 8px;color:@text;}"));
 }
 
 /// 状态行统一外观。
@@ -85,9 +90,10 @@ void styleStatus(QLabel *label)
     label->setStyleSheet(QStringLiteral("font-size:12px;"));
 }
 
-void setStatus(QLabel *label, const QString &text, const char *colorHex)
+void setStatus(QLabel *label, const QString &text, xtools::theme::Color token)
 {
-    label->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(colorHex)));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;color:@%1;")
+                                         .arg(xtools::theme::tokenName(token)));
     label->setText(text);
 }
 
@@ -337,7 +343,7 @@ private:
 
         const jwtlogic::VerifyResult verify =
             jwtlogic::verifyToken(decoded, m_secretDecode->text());
-        const char *statusColor = color::ink;
+        xtools::theme::Color statusColor = color::ink;
         switch (verify) {
         case jwtlogic::VerifyResult::Valid:
             statusColor = color::success;
@@ -362,7 +368,8 @@ private:
     {
         if (!decoded.payloadIsObject) {
             m_claims->setText(QStringLiteral("Payload 不是 JSON 对象，已按原文展示"));
-            m_claims->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(color::hint)));
+            xtools::theme::applyStyle(m_claims, QStringLiteral("font-size:12px;color:@%1;")
+                                                    .arg(xtools::theme::tokenName(color::hint)));
             return;
         }
 
@@ -388,8 +395,9 @@ private:
         }
 
         m_claims->setText(bits.join(QStringLiteral(" · ")));
-        m_claims->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(
-            QLatin1String(expired ? color::error : color::ink)));
+        xtools::theme::applyStyle(m_claims, QStringLiteral("font-size:12px;color:@%1;")
+                                                .arg(xtools::theme::tokenName(
+                                                    expired ? color::error : color::ink)));
     }
 
     // ------------------------------------------------------------ 编码

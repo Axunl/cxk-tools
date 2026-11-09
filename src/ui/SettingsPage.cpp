@@ -4,9 +4,11 @@
 #include "Log.h"
 #include "PluginManager.h"
 #include "Settings.h"
+#include "Theme.h"
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
 #include <QGroupBox>
@@ -15,6 +17,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
+#include <QStyle>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -23,6 +26,24 @@
 // 直接 include <windows.h> 会把 min/max 宏带进来跟 Qt 打架。
 #  include <QtCore/qt_windows.h>
 #endif
+
+namespace {
+
+/// 给 hint 类标签切换状态色（ok / error / 空=默认）。
+///
+/// 为什么不用 setStyleSheet：内联样式的优先级高于全局样式表，写死颜色后
+/// 用户切到深色主题时会停在旧的浅色值上；而且每处都要再把字号抄一遍。
+/// 动态属性 + unpolish/polish 让 qss 重新求值，颜色由主题决定。
+void setHintState(QWidget *widget, const QString &state)
+{
+    if (!widget)
+        return;
+    widget->setProperty("state", state);
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+}
+
+} // namespace
 
 // ---------------------------------------------------------------- HotkeyButton
 
@@ -175,8 +196,8 @@ QWidget *SettingsPage::buildGeneralGroup()
     m_hotkeyButton->setSequence(m_settings->hotkey());
 
     m_hotkeyStatus = new QLabel(group);
+    // 颜色与字号统一由 style.qss 的 QLabel#hint 决定（换肤时才会跟着变）
     m_hotkeyStatus->setObjectName(QStringLiteral("hint"));
-    m_hotkeyStatus->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
 
     hotkeyRow->addWidget(hotkeyLabel);
     hotkeyRow->addWidget(m_hotkeyButton);
@@ -197,6 +218,37 @@ QWidget *SettingsPage::buildGeneralGroup()
     });
     layout->addWidget(autostart);
 
+    // ---- 界面主题
+    auto *themeRow = new QHBoxLayout;
+
+    auto *themeLabel = new QLabel(QStringLiteral("界面主题"), group);
+    themeLabel->setMinimumWidth(110);   // 与热键那一行的标签对齐
+
+    m_themeCombo = new QComboBox(group);
+    // 用户文案在前、配置值放 data：配置值是 ini 里存的内容，必须稳定（不随文案翻译变）
+    m_themeCombo->addItem(QStringLiteral("跟随系统"), Theme::modeToString(Theme::Mode::System));
+    m_themeCombo->addItem(QStringLiteral("浅色"), Theme::modeToString(Theme::Mode::Light));
+    m_themeCombo->addItem(QStringLiteral("深色"), Theme::modeToString(Theme::Mode::Dark));
+    m_themeCombo->setCurrentIndex(m_themeCombo->findData(Theme::modeToString(Theme::instance().mode())));
+
+    auto *themeHint = new QLabel(QStringLiteral("切换后立即生效，不用重启"), group);
+    themeHint->setObjectName(QStringLiteral("hint"));
+
+    themeRow->addWidget(themeLabel);
+    themeRow->addWidget(m_themeCombo);
+    themeRow->addWidget(themeHint, 1);
+    layout->addLayout(themeRow);
+
+    connect(m_themeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const QString value = m_themeCombo->itemData(index).toString();
+        bool ok = false;
+        const Theme::Mode mode = Theme::modeFromString(value, &ok);
+        if (!ok)
+            return;
+        // setMode 内部负责落盘 + 重新应用；这里不要重复调 apply()
+        Theme::instance().setMode(mode);
+    });
+
     return group;
 }
 
@@ -212,7 +264,7 @@ QWidget *SettingsPage::buildPluginGroup()
     auto *dirRow = new QHBoxLayout;
     auto *dirLabel = new QLabel(QDir::toNativeSeparators(dirPath), group);
     dirLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);   // 方便复制路径去丢文件
-    dirLabel->setStyleSheet(QStringLiteral("color:#475569;font-size:12px;"));
+    dirLabel->setObjectName(QStringLiteral("settingsValue"));
 
     auto *openBtn = new QPushButton(QStringLiteral("打开目录"), group);
     auto *restartBtn = new QPushButton(QStringLiteral("重启应用"), group);
@@ -236,14 +288,14 @@ QWidget *SettingsPage::buildPluginGroup()
 
     auto *summary = new QLabel(QStringLiteral("已加载 %1 个插件，失败 %2 个").arg(loaded).arg(errors.size()),
                               group);
-    summary->setStyleSheet(QStringLiteral("color:#475569;font-size:12px;"));
+    summary->setObjectName(QStringLiteral("settingsValue"));
     layout->addWidget(summary);
 
     // 失败原因逐条列出：用户丢进来的插件加载不了时，这里是他唯一能看到的诊断信息
     for (const QString &err : errors) {
         auto *line = new QLabel(QStringLiteral("• %1").arg(err), group);
         line->setWordWrap(true);
-        line->setStyleSheet(QStringLiteral("color:#DC2626;font-size:12px;"));
+        line->setObjectName(QStringLiteral("settingsError"));
         layout->addWidget(line);
     }
 
@@ -251,7 +303,7 @@ QWidget *SettingsPage::buildPluginGroup()
         QStringLiteral("离线安装：把编译好的插件动态库复制到上面的目录，重启应用即可生效；删除即卸载。"),
         group);
     tip->setWordWrap(true);
-    tip->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    tip->setObjectName(QStringLiteral("hint"));
     layout->addWidget(tip);
 
     return group;
@@ -268,7 +320,7 @@ QWidget *SettingsPage::buildUpdateGroup()
     row->setAlignment(Qt::AlignVCenter);
 
     auto *current = new QLabel(QStringLiteral("当前版本 %1").arg(QApplication::applicationVersion()), group);
-    current->setStyleSheet(QStringLiteral("color:#475569;font-size:12px;"));
+    current->setObjectName(QStringLiteral("settingsValue"));
     // 显式垂直居中：行高由右侧按钮撑起来，不写这一句文字会贴在行顶
     current->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
@@ -286,7 +338,7 @@ QWidget *SettingsPage::buildUpdateGroup()
 
     m_updateStatus = new QLabel(group);
     m_updateStatus->setWordWrap(true);
-    m_updateStatus->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    m_updateStatus->setObjectName(QStringLiteral("hint"));
     // 没有状态就别占一行：空 QLabel 会在勾选框和提示之间留出一道莫名其妙的空隙
     m_updateStatus->hide();
     layout->addWidget(m_updateStatus);
@@ -296,7 +348,7 @@ QWidget *SettingsPage::buildUpdateGroup()
                        "便携版只下载压缩包，解压覆盖由你决定。"),
         group);
     tip->setWordWrap(true);
-    tip->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    tip->setObjectName(QStringLiteral("hint"));
     layout->addWidget(tip);
 
     // 立刻置灰而不是等信号回来：用户连点两下会压出两个请求，
@@ -318,8 +370,7 @@ void SettingsPage::setUpdateStatus(const QString &text, bool ok)
 {
     m_updateButton->setEnabled(true);
     m_updateStatus->setText(text);
-    m_updateStatus->setStyleSheet(ok ? QStringLiteral("color:#10B981;font-size:12px;")
-                                     : QStringLiteral("color:#DC2626;font-size:12px;"));
+    setHintState(m_updateStatus, ok ? QStringLiteral("ok") : QStringLiteral("error"));
     m_updateStatus->setVisible(!text.isEmpty());
 }
 
@@ -328,7 +379,7 @@ void SettingsPage::setUpdateChecking(bool checking)
     m_updateButton->setEnabled(!checking);
     if (checking) {
         m_updateStatus->setText(QStringLiteral("正在检查更新…"));
-        m_updateStatus->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+        setHintState(m_updateStatus, QString());
         m_updateStatus->show();
     }
 }
@@ -341,28 +392,28 @@ QWidget *SettingsPage::buildAboutGroup()
     layout->setSpacing(6);
 
     auto *ver = new QLabel(QStringLiteral("CXK 工具箱 %1").arg(QApplication::applicationVersion()), group);
-    ver->setStyleSheet(QStringLiteral("color:#0F172A;font-weight:600;"));
+    ver->setObjectName(QStringLiteral("settingsVersion"));
     layout->addWidget(ver);
 
     auto *qt = new QLabel(QStringLiteral("Qt %1 · 接口版本 %2")
                               .arg(QString::fromLatin1(qVersion()))
                               .arg(XTOOLS_API_VERSION),
                           group);
-    qt->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    qt->setObjectName(QStringLiteral("hint"));
     layout->addWidget(qt);
 
     auto *cfg = new QLabel(QStringLiteral("配置文件：%1").arg(QDir::toNativeSeparators(m_settings->configFilePath())),
                            group);
     cfg->setWordWrap(true);
     cfg->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    cfg->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    cfg->setObjectName(QStringLiteral("hint"));
     layout->addWidget(cfg);
 
     // 插件加载失败时用户常被问"日志在哪"，直接给路径最省事
     auto *logLabel = new QLabel(QStringLiteral("日志：%1").arg(QDir::toNativeSeparators(Log::filePath())), group);
     logLabel->setWordWrap(true);
     logLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    logLabel->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    logLabel->setObjectName(QStringLiteral("hint"));
     layout->addWidget(logLabel);
 
     return group;
@@ -373,6 +424,5 @@ void SettingsPage::setHotkeyStatus(const QString &text, bool ok)
     if (!m_hotkeyStatus)
         return;
     m_hotkeyStatus->setText(text);
-    m_hotkeyStatus->setStyleSheet(QStringLiteral("font-size:12px;color:%1;")
-                                      .arg(ok ? QStringLiteral("#10B981") : QStringLiteral("#DC2626")));
+    setHintState(m_hotkeyStatus, ok ? QStringLiteral("ok") : QStringLiteral("error"));
 }

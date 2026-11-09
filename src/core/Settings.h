@@ -34,6 +34,12 @@ public:
     bool startWithSystem() const;
     void setStartWithSystem(bool on);
 
+    /// 界面主题："system"（跟随系统）/ "light" / "dark"。默认跟随系统。
+    /// 存字符串而不是枚举：ini 是给人看的，写 "dark" 比写 "2" 更能说明问题。
+    /// 合法值的解析与回退在 Theme::modeFromString 里，本类只负责存取。
+    QString themeMode() const;
+    void setThemeMode(const QString &mode);
+
     /// 最近使用过的工具 id，按时间倒序（最新的在前）。
     /// limit <= 0 表示不裁剪——写入时的裁剪逻辑要拿全量才能知道该删谁。
     QStringList recentToolIds(int limit = kRecentLimit) const;

@@ -6,22 +6,27 @@
 #include "Settings.h"
 #include "ToolRegistry.h"
 
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFontMetrics>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -44,6 +49,7 @@ constexpr int kSearchHeight = 40;
 constexpr int kSearchClearSize = 20;
 constexpr int kSearchClearGap = 8;
 constexpr int kNameMaxWidth = kTileWidth - 12;
+constexpr int kIntentIcon = 34;   ///< 建议条左侧工具图标
 
 } // namespace
 
@@ -185,6 +191,136 @@ void LauncherTile::leaveEvent(QEvent *event)
 }
 
 // ---------------------------------------------------------------------------
+// IntentBanner
+// ---------------------------------------------------------------------------
+
+IntentBanner::IntentBanner(QWidget *parent)
+    : QWidget(parent)
+{
+    setObjectName(QStringLiteral("intentBanner"));
+    // 与 LauncherTile 同一原因：QWidget 子类的 qss 背景必须靠 WA_StyledBackground 才画
+    setAttribute(Qt::WA_StyledBackground, true);
+    setCursor(Qt::PointingHandCursor);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
+    auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(12, 10, 12, 10);
+    layout->setSpacing(12);
+
+    m_iconLabel = new QLabel(this);
+    m_iconLabel->setObjectName(QStringLiteral("intentIcon"));
+    m_iconLabel->setFixedSize(kIntentIcon, kIntentIcon);
+    m_iconLabel->setAlignment(Qt::AlignCenter);
+
+    auto *textBox = new QVBoxLayout;
+    textBox->setContentsMargins(0, 0, 0, 0);
+    textBox->setSpacing(2);
+
+    m_title = new QLabel(this);
+    m_title->setObjectName(QStringLiteral("intentTitle"));
+    m_detail = new QLabel(this);
+    m_detail->setObjectName(QStringLiteral("intentDetail"));
+    // 详情是内容摘要，可能很长：锁死单行，并且不参与「撑宽布局」——
+    // 否则一段长 JSON 会把建议条的最小宽度顶到窗口之外（首页横向滚动条是关掉的）。
+    m_detail->setWordWrap(false);
+    m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_detail->setTextInteractionFlags(Qt::NoTextInteraction);
+
+    textBox->addWidget(m_title);
+    textBox->addWidget(m_detail);
+
+    // 右侧「回车」提示：告诉用户不必再点，按回车就是这个建议
+    auto *hint = new QLabel(QStringLiteral("Enter 打开"), this);
+    hint->setObjectName(QStringLiteral("intentHint"));
+
+    layout->addWidget(m_iconLabel);
+    layout->addLayout(textBox, 1);
+    layout->addWidget(hint, 0, Qt::AlignVCenter);
+}
+
+void IntentBanner::setContent(const QIcon &icon, const QString &title, const QString &detail)
+{
+    m_icon = icon;
+    m_title->setText(title);
+    m_detailText = detail;
+    m_detail->setText(detail);   // 先给原文，宽度确定后再按需省略
+
+    QPixmap pm = m_icon.pixmap(QSize(kIntentIcon, kIntentIcon), devicePixelRatioF());
+    if (pm.isNull())
+        pm = IconBadge::pixmap(title, title.left(1), kIntentIcon, devicePixelRatioF());
+    m_iconLabel->setPixmap(pm);
+
+    updateElidedDetail();
+}
+
+void IntentBanner::updateElidedDetail()
+{
+    if (m_detailText.isEmpty() || !m_detail)
+        return;
+    const int available = m_detail->width();
+    if (available <= 0)
+        return;
+    const QFontMetrics fm(m_detail->font());
+    m_detail->setText(fm.elidedText(m_detailText, Qt::ElideRight, available));
+}
+
+void IntentBanner::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    // 布局是在 resizeEvent **之后**才更新子控件几何的，所以这里读到的
+    // m_detail->width() 还是旧值。延后一拍（事件循环回到空闲）再按真实宽度省略。
+    QTimer::singleShot(0, this, [this] { updateElidedDetail(); });
+}
+
+void IntentBanner::setHovered(bool on)
+{
+    if (m_hovered == on)
+        return;
+    m_hovered = on;
+    setProperty("hovered", on);
+    // 动态属性变了必须 unpolish/polish，qss 选择器才会重新求值（与 LauncherTile 一致）
+    style()->unpolish(this);
+    style()->polish(this);
+    update();
+}
+
+void IntentBanner::mouseReleaseEvent(QMouseEvent *event)
+{
+    // 只认「在建议条内按下并抬起」的左键
+    if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint())) {
+        emit activated();
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void IntentBanner::enterEvent(QEnterEvent *event)
+{
+    setHovered(true);
+    QWidget::enterEvent(event);
+}
+
+void IntentBanner::leaveEvent(QEvent *event)
+{
+    setHovered(false);
+    QWidget::leaveEvent(event);
+}
+
+void IntentBanner::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 构造时窗口还没落到屏幕上，devicePixelRatioF() 不可靠，图标要在这里重取一次
+    if (!m_icon.isNull()) {
+        const QPixmap pm = m_icon.pixmap(QSize(kIntentIcon, kIntentIcon), devicePixelRatioF());
+        if (!pm.isNull())
+            m_iconLabel->setPixmap(pm);
+    }
+    // 字体（qss 里的字号）到显示时才最终生效，省略宽度要按最终字体重算
+    QTimer::singleShot(0, this, [this] { updateElidedDetail(); });
+}
+
+// ---------------------------------------------------------------------------
 // HomePage
 // ---------------------------------------------------------------------------
 
@@ -230,9 +366,13 @@ void HomePage::buildUi()
     m_searchClear->setCursor(Qt::PointingHandCursor);
     m_searchClear->setFocusPolicy(Qt::NoFocus);   // 不抢焦点，点完还能继续输入
     m_searchClear->hide();
-    connect(m_searchClear, &QToolButton::clicked, m_search, &QLineEdit::clear);
+    // 点 ✕ 要连粘贴进来的图片一起清掉，所以不能直接接 QLineEdit::clear
+    connect(m_searchClear, &QToolButton::clicked, this, &HomePage::clearSearch);
     connect(m_search, &QLineEdit::textChanged, this, [this](const QString &text) {
         m_searchClear->setVisible(!text.isEmpty());
+        // 粘贴图片后用户又开始打字：以文字为准，把图片丢掉（否则会一直停在 OCR 建议上）
+        if (!text.isEmpty() && !m_pendingImage.isNull())
+            clearPendingImage();
         rebuild();
     });
 
@@ -286,6 +426,11 @@ void HomePage::buildUi()
     makeGroup(QStringLiteral("全部"), &m_allBox, &m_allTitle, &m_allGrid);
     makeGroup(QStringLiteral("本机应用"), &m_appBox, &m_appTitle, &m_appGrid);
 
+    // 建议条放在所有分组之上：它是「这段输入该交给谁」的直接答案，必须在视线第一落点
+    m_intent = new IntentBanner(m_content);
+    m_intent->hide();
+    connect(m_intent, &IntentBanner::activated, this, &HomePage::activateIntent);
+
     // 搜索无命中：与「一个工具都没有」是两回事，文案与处理都分开
     m_noResult = new QLabel(QStringLiteral("没有找到匹配的工具或应用"), m_content);
     m_noResult->setObjectName(QStringLiteral("homeHint"));
@@ -326,6 +471,7 @@ void HomePage::buildUi()
     emptyLayout->addWidget(emptyDesc);
     emptyLayout->addLayout(btnRow);
 
+    contentLayout->addWidget(m_intent);
     contentLayout->addWidget(m_recentBox);
     contentLayout->addWidget(m_allBox);
     contentLayout->addWidget(m_appBox);
@@ -401,7 +547,11 @@ void HomePage::rebuild()
         bucket->append(tile);
     };
 
-    if (query.isEmpty()) {
+    if (!m_pendingImage.isNull()) {
+        // 贴图时首页只回答一件事：要不要识别这张图。不列任何磁贴，避免抢视线。
+        // （关键词在 setPendingImage 里已被清空，这里若继续走 query.isEmpty() 分支
+        //   会把整个「全部」网格铺出来，建议条反而被挤下去。）
+    } else if (query.isEmpty()) {
         m_allTitle->setText(QStringLiteral("全部"));
 
         // 最近使用：工具和本机应用共用一个时间序列。键里可能残留已卸载的插件/
@@ -445,11 +595,23 @@ void HomePage::rebuild()
                                                  : QStringLiteral("工具"));
     }
 
+    // 建议条：贴图时它独占首页（此时上面两个分支不会产出任何磁贴），
+    // 文字输入时要先知道「有没有命中」才能决定要不要给翻译建议。
+    const bool hasHits = !m_allTiles.isEmpty() || !m_appTiles.isEmpty();
+    updateIntent(query, hasHits);
+
     // 分组显隐统一按内容判断：「没有工具只有应用」时不能留下一个空的「全部」标题
     m_recentBox->setVisible(!m_recentTiles.isEmpty());
     m_allBox->setVisible(!m_allTiles.isEmpty());
     m_appBox->setVisible(!m_appTiles.isEmpty());
-    m_noResult->setVisible(!query.isEmpty() && m_allTiles.isEmpty() && m_appTiles.isEmpty());
+
+    // 「什么都没搜到」分两种：给了建议就把位置让给建议条，没建议才提示找不到。
+    // 贴图但 OCR 插件没加载也走这里，文案要具体（否则用户会以为图片没粘上）。
+    const bool imageMode = !m_pendingImage.isNull();
+    m_noResult->setText(imageMode
+                            ? QStringLiteral("已粘贴图片，但没找到能识别文字的 OCR 工具")
+                            : QStringLiteral("没有找到匹配的工具或应用"));
+    m_noResult->setVisible((imageMode || !query.isEmpty()) && !hasHits && !m_intentData.valid());
 
     // 视觉顺序 = 键盘导航顺序
     m_tiles = m_recentTiles + m_allTiles + m_appTiles;
@@ -457,6 +619,133 @@ void HomePage::rebuild()
     m_lastColumns = -1;   // 磁贴全换了，强制重新摆一次
     reflow();
     updateFooter();
+}
+
+void HomePage::updateIntent(const QString &query, bool hasToolHits)
+{
+    // 贴图优先于文字：图片已经把搜索框清空，此时 query 没有意义
+    m_intentData = !m_pendingImage.isNull()
+        ? queryintent::forImage(m_pendingImage.size())
+        : queryintent::forText(query, hasToolHits);
+
+    if (!m_intentData.valid()) {
+        m_intent->hide();
+        return;
+    }
+
+    // 目标插件没加载时（用户手动删过 plugins 目录里的文件）宁可不提示：
+    // 摆一条回车没反应的建议比什么都不提示更糟。
+    const ToolEntry *entry = m_registry ? m_registry->entryById(m_intentData.toolId) : nullptr;
+    if (!entry) {
+        m_intentData = queryintent::Suggestion{};
+        m_intent->hide();
+        return;
+    }
+
+    QString title;
+    QString detail;
+    switch (m_intentData.kind) {
+    case queryintent::Kind::Json:
+        title = QStringLiteral("用「%1」打开这段 JSON").arg(entry->name());
+        detail = queryintent::preview(m_intentData.text);
+        break;
+    case queryintent::Kind::Image:
+        title = QStringLiteral("用「%1」提取图片里的文字").arg(entry->name());
+        detail = QStringLiteral("已粘贴 %1 × %2 的图片，回车直接识别")
+                     .arg(m_intentData.imageSize.width())
+                     .arg(m_intentData.imageSize.height());
+        break;
+    case queryintent::Kind::Translate:
+        title = QStringLiteral("用「%1」翻译这段英文").arg(entry->name());
+        detail = queryintent::preview(m_intentData.text);
+        break;
+    case queryintent::Kind::None:
+        break;
+    }
+
+    m_intent->setContent(entry->icon, title, detail);
+    m_intent->show();
+}
+
+void HomePage::activateIntent()
+{
+    if (!m_intentData.valid())
+        return;
+
+    xtools::ToolInput input;
+    if (m_intentData.kind == queryintent::Kind::Image) {
+        input.kind = xtools::ToolInput::Kind::Image;
+        input.image = m_pendingImage;
+    } else {
+        input.kind = xtools::ToolInput::Kind::Text;
+        input.text = m_intentData.text;
+    }
+
+    const QString toolId = m_intentData.toolId;
+
+    // 交出去之后建议必须失效：否则从工具页 Esc 回首页时，focusSearch() 之前
+    // 会先闪一下「已粘贴的图片」建议（图片已经被送走了，这条建议是假的）。
+    clearPendingImage();
+    m_intentData = queryintent::Suggestion{};
+    m_intent->hide();
+
+    emit toolActivatedWithInput(toolId, input);
+}
+
+void HomePage::setPendingImage(const QImage &image)
+{
+    if (image.isNull())
+        return;
+
+    m_pendingImage = image;
+
+    // 清掉上一轮的文字关键词：留着会变成「既在搜文字又在贴图」，两组结果互相干扰。
+    // clear() 会发 textChanged 触发重建，此时 m_pendingImage 已就位，正是要的状态。
+    if (!m_search->text().isEmpty()) {
+        m_search->clear();
+    } else {
+        m_searchClear->hide();
+        rebuild();
+    }
+    m_search->setFocus(Qt::OtherFocusReason);
+}
+
+void HomePage::clearPendingImage()
+{
+    if (m_pendingImage.isNull())
+        return;
+    m_pendingImage = QImage();
+    m_intentData = queryintent::Suggestion{};
+    if (m_intent)
+        m_intent->hide();
+}
+
+void HomePage::clearSearch()
+{
+    // 先清图片，再清文字：clear() 触发的重建就不该再带出贴图建议
+    clearPendingImage();
+    if (m_search->text().isEmpty()) {
+        m_searchClear->hide();
+        rebuild();
+    } else {
+        m_search->clear();   // textChanged 会触发重建并同步 ✕ 的显隐
+    }
+}
+
+QImage HomePage::clipboardImage()
+{
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard || !clipboard->mimeData() || !clipboard->mimeData()->hasImage())
+        return QImage();
+
+    QImage image = clipboard->image();
+    if (image.isNull()) {
+        // 部分截图工具只往剪贴板放 pixmap（没有 image 变体），再取一次兜底
+        const QPixmap pixmap = clipboard->pixmap();
+        if (!pixmap.isNull())
+            image = pixmap.toImage();
+    }
+    return image;
 }
 
 void HomePage::showEmptyState(bool empty)
@@ -469,6 +758,7 @@ void HomePage::showEmptyState(bool empty)
     m_recentBox->hide();
     m_allBox->hide();
     m_appBox->hide();
+    m_intent->hide();
     m_noResult->hide();
 }
 
@@ -527,16 +817,19 @@ void HomePage::resizeEvent(QResizeEvent *event)
 
 void HomePage::focusSearch()
 {
-    if (!m_search->text().isEmpty())
-        m_search->clear();   // textChanged 会触发重建
+    // 关键词和待处理图片都要清掉：热键呼出是「重新开始一次搜索」的语义，
+    // 残留的 JSON 或图片会让下次呼出直接落到上一次的建议上。
+    if (!m_search->text().isEmpty() || !m_pendingImage.isNull())
+        clearSearch();   // textChanged / 手动调用都会重建
     else
-        rebuild();           // 关键词本来就是空的，信号不会发，手动刷一次
+        rebuild();       // 关键词本来就是空的，信号不会发，手动刷一次
     m_search->setFocus(Qt::ShortcutFocusReason);
     m_search->selectAll();   // 全选：直接输入即替换旧关键词
 }
 
 void HomePage::setSearchText(const QString &text)
 {
+    clearPendingImage();       // 命令行预填只处理文字，图片建议要失效
     m_search->setText(text);   // textChanged 触发重建
     m_search->setFocus(Qt::OtherFocusReason);
     m_search->selectAll();
@@ -573,6 +866,13 @@ void HomePage::moveCurrent(int delta)
 
 bool HomePage::activateCurrent()
 {
+    // 建议条优先：用户还没用方向键挑具体磁贴时，回车就是「按建议办」。
+    // 一旦按过方向键（m_currentIndex >= 0），说明他明确选中了某个磁贴，按磁贴走。
+    if (m_intentData.valid() && m_currentIndex < 0) {
+        activateIntent();
+        return true;
+    }
+
     if (m_tiles.isEmpty())
         return false;
 
@@ -608,6 +908,22 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
 
         if (event->type() == QEvent::KeyPress) {
             auto *ke = static_cast<QKeyEvent *>(event);
+
+            // 剪贴板里是图片时，Ctrl+V / Shift+Insert 走「贴图」路径。
+            // 直接交给 QLineEdit 只会取文本，图片被它静默丢掉（用户会以为复制失败）。
+            // 不是图片就原样放行，仍由 QLineEdit 完成普通粘贴。
+            const bool pasteChord = (ke->key() == Qt::Key_V
+                                     && ke->modifiers().testFlag(Qt::ControlModifier))
+                                    || (ke->key() == Qt::Key_Insert
+                                        && ke->modifiers().testFlag(Qt::ShiftModifier));
+            if (pasteChord) {
+                const QImage image = clipboardImage();
+                if (!image.isNull()) {
+                    setPendingImage(image);
+                    return true;
+                }
+            }
+
             switch (ke->key()) {
             case Qt::Key_Return:
             case Qt::Key_Enter:
@@ -626,9 +942,9 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
                 moveCurrent(-columnCount());
                 return true;
             case Qt::Key_Escape:
-                if (m_search->text().isEmpty())
+                if (m_search->text().isEmpty() && m_pendingImage.isNull())
                     break;   // 没可清空的内容：交回传播链，由 MainWindow 决定收托盘
-                m_search->clear();
+                clearSearch();
                 return true;
             default:
                 break;

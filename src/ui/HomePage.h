@@ -16,9 +16,16 @@
 //   * 磁贴顺序 = 键盘导航顺序（最近 → 工具 → 应用），不做去重：同一项可能同时
 //     出现在两组里（与 uTools 一致），保持「下标 = 视觉位置」，否则方向键会跳到
 //     跟眼睛看到的不一致的地方。
+//   * 搜索框顶部会按输入内容给一条「建议条」（SearchIntent 区段）：贴进一段 JSON、
+//     贴进一张图片、或输入英文却什么都没搜到时，建议条把「交给哪个工具、会带什么
+//     内容进去」摆在最前面 —— 此时回车走建议，而不是走搜索结果。
 // ---------------------------------------------------------------------------
 
+#include "IToolInput.h"
+#include "QueryIntent.h"
+
 #include <QIcon>
+#include <QImage>
 #include <QList>
 #include <QString>
 #include <QWidget>
@@ -30,6 +37,10 @@ class QScrollArea;
 class QToolButton;
 class QVBoxLayout;
 class QHBoxLayout;
+class QMouseEvent;
+class QEnterEvent;
+class QShowEvent;
+class QResizeEvent;
 class LocalAppIndex;
 class PluginManager;
 class Settings;
@@ -95,6 +106,43 @@ private:
     bool m_hovered = false;
 };
 
+/// 搜索建议条：横跨一行，说明「这段输入能交给哪个工具、会带什么内容进去」。
+///
+/// 为什么单独做成控件而不是塞进磁贴网格：磁贴是 104×100 的方块，放不下一句话说明；
+/// 建议条需要显示「目标工具 + 内容摘要 + 回车提示」三段信息，且要能整行点击。
+class IntentBanner : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit IntentBanner(QWidget *parent = nullptr);
+
+    /// 刷新内容。图标按工具取（与磁贴同一套兜底逻辑由调用方负责）。
+    void setContent(const QIcon &icon, const QString &title, const QString &detail);
+
+signals:
+    void activated();
+
+protected:
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+
+private:
+    void setHovered(bool on);
+    /// 按建议条当前宽度把详情文字省略成一行（超长内容不撑宽布局、也不生硬截断）。
+    void updateElidedDetail();
+
+    QIcon m_icon;   ///< 图标在 showEvent 里按真实 DPR 取像素（与 LauncherTile 同一处理）
+    QString m_detailText;   ///< 未省略的详情原文，每次 resize 都按新宽度重算
+    QLabel *m_iconLabel = nullptr;
+    QLabel *m_title = nullptr;
+    QLabel *m_detail = nullptr;
+    bool m_hovered = false;
+};
+
 /// 首页页：搜索 + 网格 + 页脚。
 class HomePage : public QWidget
 {
@@ -122,6 +170,9 @@ signals:
     void toolActivated(const QString &toolId);
     void toolPopOutRequested(const QString &toolId);
     void appActivated(const QString &appId);
+    /// 带内容进入工具（JSON 原文 / 粘贴的图片 / 待翻译英文）。
+    /// 与 toolActivated 分开：普通打开不需要携带任何内容。
+    void toolActivatedWithInput(const QString &toolId, const xtools::ToolInput &input);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -138,6 +189,21 @@ private:
     void updateFooter();
     void showEmptyState(bool empty);
 
+    // ------------------------------------------------------------ 搜索建议
+    /// 按当前输入算出建议并刷新建议条；query 为空或建议的工具没加载时不显示。
+    void updateIntent(const QString &query, bool hasToolHits);
+    /// 执行建议：把内容装进 ToolInput 交给 MainWindow。回车与点击建议条都走这里。
+    void activateIntent();
+    /// 记下粘贴进来的图片并重建（图片优先于文字搜索）。
+    void setPendingImage(const QImage &image);
+    /// 丢掉待处理图片（清空搜索、Esc、切走、执行建议后都要调）。
+    void clearPendingImage();
+    /// 清空搜索框 + 待处理图片，并重建一次（✕ 按钮与 Esc 共用）。
+    void clearSearch();
+    /// 剪贴板里是图片时返回它，否则返回空 QImage。
+    /// 某些截图工具只往剪贴板放 pixmap，只查 imageData() 会拿不到，所以要回退一次。
+    static QImage clipboardImage();
+
     ToolRegistry *m_registry = nullptr;
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
@@ -149,6 +215,9 @@ private:
 
     QScrollArea *m_scroll = nullptr;
     QWidget *m_content = nullptr;
+    IntentBanner *m_intent = nullptr;         ///< 建议条，没有建议时整块隐藏
+    queryintent::Suggestion m_intentData;     ///< 当前建议（内容 + 目标工具）
+    QImage m_pendingImage;                    ///< 从剪贴板贴进来的图片，等待交给 OCR
     QWidget *m_recentBox = nullptr;   ///< 「最近使用」整组（工具 + 应用混排），空则隐藏
     QLabel *m_recentTitle = nullptr;
     QGridLayout *m_recentGrid = nullptr;

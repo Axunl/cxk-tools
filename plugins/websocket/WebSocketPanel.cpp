@@ -1,5 +1,7 @@
 #include "WebSocketPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "WsProtocol.h"   // 纯协议逻辑（地址解析、子协议解析）
 #include "WsServer.h"     // 服务端连接层
 
@@ -24,43 +26,44 @@
 namespace {
 
 /// 状态行与日志的文字颜色。集中定义，避免各处写字面量后慢慢漂移。
+/// 语义令牌而不是色值：日志行是按调用当时的主题着色写进富文本的。
 namespace color {
-constexpr const char *error   = "#DC2626";   // 握手失败、连接出错
-constexpr const char *success = "#10B981";   // 已连接 / 正在监听
-constexpr const char *hint    = "#94A3B8";   // 空闲
-constexpr const char *warn    = "#D97706";   // 连接中、关闭中、没有客户端
-constexpr const char *recv    = "#0F172A";   // 收到的消息
-constexpr const char *sent    = "#4F6BF6";   // 发出的消息
-constexpr const char *system  = "#64748B";   // 协议事件（握手/ping/pong/关闭）
+constexpr auto error   = xtools::theme::Color::Danger;      // 握手失败、连接出错
+constexpr auto success = xtools::theme::Color::Success;     // 已连接 / 正在监听
+constexpr auto hint    = xtools::theme::Color::TextFaint;   // 空闲
+constexpr auto warn    = xtools::theme::Color::WarnStrong;  // 连接中、关闭中、没有客户端
+constexpr auto recv    = xtools::theme::Color::Text;        // 收到的消息
+constexpr auto sent    = xtools::theme::Color::Accent;      // 发出的消息
+constexpr auto system  = xtools::theme::Color::TextMuted;   // 协议事件（握手/ping/pong/关闭）
 } // namespace color
 
 /// 小节标题，与 JwtPanel / TextKitPanel 同一号灰蓝小字。
 QLabel *makeCaption(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral("font-size:12px;font-weight:600;color:#64748B;"));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;font-weight:600;color:@text-muted;"));
     return label;
 }
 
-/// 代码/日志区统一外观：等宽字体、白底描边圆角。
-/// （插件面板不按 objectName 进全局 qss，跟 CalcPanel / JwtPanel 一样就地写内联样式。）
+/// 代码/日志区统一外观：等宽字体、描边圆角。
+/// 颜色写 @令牌：插件换肤靠宿主遍历控件重算（见 api/ThemePalette.h）。
 void styleMonoEdit(QPlainTextEdit *edit)
 {
     edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    edit->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;"
-        "padding:6px 8px;color:#0F172A;}"));
+    xtools::theme::applyStyle(edit, QStringLiteral(
+        "QPlainTextEdit{background:@bg;border:1px solid @border;border-radius:8px;"
+        "padding:6px 8px;color:@text;}"));
 }
 
 /// 客户端列表：与 cronNext / fsTextList 同一套白底细边框观感。
 /// 不给 view 本身加 padding（会把 viewport 撑得比内容还小、几行也常驻滚动条）。
 void styleClientList(QListWidget *list)
 {
-    list->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;outline:none;}"
-        "QListWidget::item{padding:5px 8px;color:#334155;border-bottom:1px solid #F1F5F9;}"
+    xtools::theme::applyStyle(list, QStringLiteral(
+        "QListWidget{background:@bg;border:1px solid @border;border-radius:8px;outline:none;}"
+        "QListWidget::item{padding:5px 8px;color:@text-body;border-bottom:1px solid @border-subtle;}"
         "QListWidget::item:last{border-bottom:none;}"
-        "QListWidget::item:selected{background:#EEF2FF;color:#1D4ED8;}"));
+        "QListWidget::item:selected{background:@accent-soft;color:@accent-text;}"));
 }
 
 /// 顶部「客户端 / 服务端」分段按钮。
@@ -73,24 +76,29 @@ QPushButton *makeModeTab(const QString &text, QWidget *parent)
     button->setAutoExclusive(true);   // 同父控件下互斥
     button->setCursor(Qt::PointingHandCursor);
     button->setMinimumWidth(84);
-    button->setStyleSheet(QStringLiteral(
-        "QPushButton{border:1px solid #E2E8F0;background:#F8FAFC;color:#475569;"
+    xtools::theme::applyStyle(button, QStringLiteral(
+        "QPushButton{border:1px solid @border;background:@bg-alt;color:@text-second;"
         "border-radius:7px;padding:5px 16px;font-weight:600;}"
-        "QPushButton:hover{background:#EEF2FF;}"
-        "QPushButton:checked{background:#4F6BF6;border-color:#4F6BF6;color:#FFFFFF;}"));
+        "QPushButton:hover{background:@accent-soft;}"
+        "QPushButton:checked{background:@accent;border-color:@accent;color:@on-accent;}"));
     return button;
 }
 
 /// 追加一行日志：`时:分:秒 + 内容`，按方向/事件上色。
 /// 用富文本而不是纯文本，是为了让"发出去"和"收到"在长日志里一眼分得开。
-void appendLogLine(QPlainTextEdit *log, const QString &text, const char *colorHex)
+void appendLogLine(QPlainTextEdit *log, const QString &text, xtools::theme::Color token)
 {
     const QString stamp = QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
     QString body = text.toHtmlEscaped();
     body.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));   // 多行消息保持换行
-    log->appendHtml(QStringLiteral("<span style=\"color:#94A3B8;\">%1</span>&nbsp;"
-                                   "<span style=\"color:%2;\">%3</span>")
-                        .arg(stamp, QString::fromLatin1(colorHex), body));
+    // 富文本颜色只能在此刻按令牌取色：已经写进文档的行不会跟着换肤
+    // （面板切走就销毁、下次重建是新主题，所以不影响正常使用）。
+    log->appendHtml(QStringLiteral("<span style=\"color:%1;\">%2</span>&nbsp;"
+                                   "<span style=\"color:%3;\">%4</span>")
+                        .arg(xtools::theme::hex(xtools::theme::Color::TextFaint),
+                             stamp,
+                             xtools::theme::hex(token),
+                             body));
 }
 
 /// 本机第一个非回环 IPv4。绑定 0.0.0.0 时用它拼「局域网连接地址」，
@@ -376,16 +384,16 @@ void WsClientPage::setConfigEnabled(bool enabled)
     m_ignoreCert->setEnabled(enabled);
 }
 
-void WsClientPage::setStatus(const QString &text, const char *colorHex)
+void WsClientPage::setStatus(const QString &text, xtools::theme::Color token)
 {
-    m_status->setStyleSheet(QStringLiteral("font-size:12px;color:%1;")
-                                .arg(QString::fromLatin1(colorHex)));
+    xtools::theme::applyStyle(m_status, QStringLiteral("font-size:12px;color:@%1;")
+                                            .arg(xtools::theme::tokenName(token)));
     m_status->setText(text);
 }
 
-void WsClientPage::appendLog(const QString &text, const char *colorHex)
+void WsClientPage::appendLog(const QString &text, xtools::theme::Color token)
 {
-    appendLogLine(m_log, text, colorHex);
+    appendLogLine(m_log, text, token);
 }
 
 // ===========================================================================
@@ -734,10 +742,10 @@ void WsServerPage::setConfigEnabled(bool enabled)
     m_protocol->setEnabled(enabled);
 }
 
-void WsServerPage::setStatus(const QString &text, const char *colorHex)
+void WsServerPage::setStatus(const QString &text, xtools::theme::Color token)
 {
-    m_status->setStyleSheet(QStringLiteral("font-size:12px;color:%1;")
-                                .arg(QString::fromLatin1(colorHex)));
+    xtools::theme::applyStyle(m_status, QStringLiteral("font-size:12px;color:@%1;")
+                                            .arg(xtools::theme::tokenName(token)));
     m_status->setText(text);
 }
 
@@ -755,9 +763,9 @@ void WsServerPage::updateStatusSummary()
               color::success);
 }
 
-void WsServerPage::appendLog(const QString &text, const char *colorHex)
+void WsServerPage::appendLog(const QString &text, xtools::theme::Color token)
 {
-    appendLogLine(m_log, text, colorHex);
+    appendLogLine(m_log, text, token);
 }
 
 QString WsServerPage::connectUrl(quint16 port) const

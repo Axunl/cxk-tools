@@ -1,5 +1,7 @@
 #include "JsonFmtPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "JsonEditor.h"
 #include "JsonText.h"   // 行列换算 / 转义等纯逻辑（可单独测试）
 
@@ -111,7 +113,9 @@ JsonFmtPanel::JsonFmtPanel(QWidget *parent)
     auto *clearBtn = new QPushButton(QStringLiteral("清空"), this);
 
     m_status = new QLabel(this);
-    m_status->setStyleSheet(QStringLiteral("font-size:12px;color:#94A3B8;"));
+    xtools::theme::applyStyle(
+        m_status, QStringLiteral("font-size:12px;color:@%1;")
+                      .arg(xtools::theme::tokenName(xtools::theme::Color::TextFaint)));
 
     toolbar->addWidget(formatBtn);
     toolbar->addWidget(compactBtn);
@@ -145,7 +149,9 @@ JsonFmtPanel::JsonFmtPanel(QWidget *parent)
 
     // 粘贴（含右键粘贴、拖放）后立刻排版 —— 只处理这一条路径，
     // 手动输入交给 JsonEditor 的自动缩进，不做整篇重排。
-    connect(m_input, &JsonEditor::textPasted, this, &JsonFmtPanel::formatPasted);
+    // 走 lambda 而不是直接连成员函数：formatPasted 有带状态文案的默认参数，
+    // 直接连的话信号（0 参）与槽（1 参）的参数个数检查在编译期就过不了。
+    connect(m_input, &JsonEditor::textPasted, this, [this] { formatPasted(); });
 
     connect(formatBtn, &QPushButton::clicked, this, [this] { formatJson(true); });
     connect(compactBtn, &QPushButton::clicked, this, [this] { formatJson(false); });
@@ -184,8 +190,10 @@ void JsonFmtPanel::showEvent(QShowEvent *event)
 void JsonFmtPanel::setStatus(const QString &text, bool ok)
 {
     m_status->setText(text);
-    m_status->setStyleSheet(QStringLiteral("font-size:12px;color:%1;")
-                                .arg(ok ? QStringLiteral("#10B981") : QStringLiteral("#DC2626")));
+    xtools::theme::applyStyle(m_status, QStringLiteral("font-size:12px;color:@%1;")
+                                             .arg(xtools::theme::tokenName(
+                                                 ok ? xtools::theme::Color::Success
+                                                    : xtools::theme::Color::Danger)));
 }
 
 void JsonFmtPanel::replaceInputText(const QString &text, int cursorPos)
@@ -200,7 +208,17 @@ void JsonFmtPanel::replaceInputText(const QString &text, int cursorPos)
     m_input->setTextCursor(restored);
 }
 
-void JsonFmtPanel::formatPasted()
+void JsonFmtPanel::setInputText(const QString &text)
+{
+    if (text.trimmed().isEmpty())
+        return;
+
+    // 走与"粘贴即格式化"同一条路径：替换全文（保留撤销栈）+ 整篇重排
+    replaceInputText(text, static_cast<int>(text.size()));
+    formatPasted(QStringLiteral("已载入首页搜索框里的 JSON"));
+}
+
+void JsonFmtPanel::formatPasted(const QString &okStatus)
 {
     const QString text = m_input->fullText();
     if (text.trimmed().isEmpty())
@@ -221,7 +239,7 @@ void JsonFmtPanel::formatPasted()
     const int cursorPos =
         qBound(0, m_input->textCursor().position(), static_cast<int>(text.size()));
     replaceInputText(formatted, mapCursorPosition(text, cursorPos, formatted));
-    setStatus(QStringLiteral("已格式化粘贴内容"), true);
+    setStatus(okStatus.isEmpty() ? QStringLiteral("已格式化粘贴内容") : okStatus, true);
 }
 
 void JsonFmtPanel::formatJson(bool indent)

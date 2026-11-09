@@ -5,7 +5,7 @@
 //   1. QApplication 之后立刻设置 org/app 名 —— QStandardPaths 依赖它来算配置/日志
 //      目录，晚于此的所有落盘都会跑到别的目录里；
 //   2. 装日志处理器，保证后续部件的告警都能落盘；
-//   3. 载入 qss；
+//   3. 载入主题（调色板 + qss）；
 //   4. 抢单实例锁（抢不到就通知已有实例并退出）；
 //   5. 交给 AppController 组装。
 // ---------------------------------------------------------------------------
@@ -14,10 +14,10 @@
 #include "IconBadge.h"
 #include "Log.h"
 #include "SingleInstance.h"
+#include "Theme.h"
 
 #include <QApplication>
 #include <QDebug>
-#include <QFile>
 
 int main(int argc, char *argv[])
 {
@@ -35,18 +35,33 @@ int main(int argc, char *argv[])
 
     Log::init();
 
-    QFile style(QStringLiteral(":/style.qss"));
-    if (style.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        // 显式 fromUtf8：源码是 UTF-8，不能让 Qt 猜
-        qApp->setStyleSheet(QString::fromUtf8(style.readAll()));
-    } else {
-        // 样式缺失不致命（界面会变成系统默认样子），但必须留痕
-        qWarning() << "main: 无法加载样式表 :/style.qss";
+    // 主题必须在任何窗口创建之前落地：卡片、磁贴这类控件只在构造时读一次
+    // 调色板/样式，晚一步就会有一批控件停在旧配色上。
+    const QStringList args = app.arguments();
+    Theme &theme = Theme::instance();
+    theme.load();
+
+    // --theme <system|light|dark>：只覆盖本次运行，不写回配置。
+    // 界面回归（--shot）需要一个固定的配色，不能依赖构建机的系统设置。
+    bool themeOverridden = false;
+    const int themeIndex = args.indexOf(QStringLiteral("--theme"));
+    if (themeIndex >= 0 && themeIndex + 1 < args.size()) {
+        bool ok = false;
+        const Theme::Mode mode = Theme::modeFromString(args.at(themeIndex + 1), &ok);
+        if (ok) {
+            theme.setMode(mode, false);   // 内含一次 apply()
+            themeOverridden = true;
+        } else {
+            qWarning() << "main: 无法识别的 --theme 取值:" << args.at(themeIndex + 1)
+                       << "（可用 system / light / dark）";
+        }
     }
+
+    if (!themeOverridden)
+        theme.apply();
 
     // --check-update / --shot 是「跑一次就退出」的诊断命令：它们不该被正在运行的实例挡住，
     // 否则想用脚本验证更新链路或做界面回归时，只要用户开着程序就永远拿到"已有实例在运行"。
-    const QStringList args = app.arguments();
     const bool diagnostic = args.contains(QStringLiteral("--check-update"))
                             || args.contains(QStringLiteral("--shot"));
 

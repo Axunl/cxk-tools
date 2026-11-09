@@ -23,6 +23,7 @@ namespace {
 constexpr auto kGroupGeneral = "settings";
 constexpr auto kKeyHotkey = "hotkey";
 constexpr auto kKeyAutostart = "start_with_system";
+constexpr auto kKeyTheme = "theme";
 constexpr auto kGroupUsage = "usage";
 /// 最近使用：recent/<toolId> = UTC ISO8601 时间戳。
 /// 单独成组而不是塞进 usage：usage 是 int 计数，改存复合值会让老用户的频次作废。
@@ -143,6 +144,20 @@ void Settings::setStartWithSystem(bool on)
     // 配置先落盘，再动系统项：即使系统项设置失败，用户下次打开设置页看到的
     // 勾选状态也与他的操作一致
     applyAutostart(on);
+}
+
+QString Settings::themeMode() const
+{
+    // 默认 "system"：深色系统上首次启动就应该是深色，而不是"白得晃眼"
+    return m_settings.value(QLatin1String(kGroupGeneral) + QLatin1Char('/') + QLatin1String(kKeyTheme),
+                            QStringLiteral("system"))
+        .toString();
+}
+
+void Settings::setThemeMode(const QString &mode)
+{
+    m_settings.setValue(QLatin1String(kGroupGeneral) + QLatin1Char('/') + QLatin1String(kKeyTheme), mode);
+    m_settings.sync();
 }
 
 QStringList Settings::recentToolIds(int limit) const

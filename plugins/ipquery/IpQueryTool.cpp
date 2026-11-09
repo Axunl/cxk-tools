@@ -1,5 +1,7 @@
 #include "IpQueryTool.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "IpQueryLogic.h"   // 纯收集/解析逻辑（可单独测试，见 AGENTS.md 的验证流程）
 
 #include <QClipboard>
@@ -55,17 +57,20 @@ public:
         textCol->setSpacing(2);
 
         m_ip = new QLabel(ip, this);
-        m_ip->setStyleSheet(QStringLiteral("font-size:15px;font-weight:600;color:#0F172A;background:transparent;"));
+        xtools::theme::applyStyle(m_ip, QStringLiteral(
+            "font-size:15px;font-weight:600;color:@text;background:transparent;"));
         textCol->addWidget(m_ip);
 
         m_source = new QLabel(source, this);
-        m_source->setStyleSheet(QStringLiteral("font-size:12px;color:#94A3B8;background:transparent;"));
+        xtools::theme::applyStyle(m_source, QStringLiteral(
+            "font-size:12px;color:@text-faint;background:transparent;"));
         textCol->addWidget(m_source);
 
         layout->addLayout(textCol, 1);
 
         m_shortcut = new QLabel(shortcut, this);
-        m_shortcut->setStyleSheet(QStringLiteral("font-size:12px;color:#94A3B8;background:transparent;"));
+        xtools::theme::applyStyle(m_shortcut, QStringLiteral(
+            "font-size:12px;color:@text-faint;background:transparent;"));
         m_shortcut->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         layout->addWidget(m_shortcut);
     }
@@ -118,9 +123,9 @@ public:
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;border:none;}"));
         m_rowsHost = new QWidget(scroll);
-        m_rowsHost->setStyleSheet(QStringLiteral(
+        xtools::theme::applyStyle(m_rowsHost, QStringLiteral(
             "QFrame#ipRow{border-radius:8px;background:transparent;}"
-            "QFrame#ipRow:hover{background:#F1F5F9;}"));
+            "QFrame#ipRow:hover{background:@bg-subtle;}"));
         m_rowsLayout = new QVBoxLayout(m_rowsHost);
         // 行距 2px：行本身有 12px 内边距，再叠大的 spacing 会散架
         m_rowsLayout->setContentsMargins(0, 0, 0, 0);
@@ -222,7 +227,9 @@ private:
         // 旧定时器不得把新提示抹掉
         const int generation = ++m_hintGeneration;
         m_hint->setText(QStringLiteral("已复制 %1 到剪贴板").arg(entry.ip));
-        m_hint->setStyleSheet(QStringLiteral("font-size:12px;color:#10B981;"));
+        xtools::theme::applyStyle(
+            m_hint, QStringLiteral("font-size:12px;color:@%1;")
+                        .arg(xtools::theme::tokenName(xtools::theme::Color::Success)));
         QTimer::singleShot(2500, this, [this, generation] {
             if (generation != m_hintGeneration)
                 return;
@@ -233,7 +240,9 @@ private:
     void showIdleHint()
     {
         m_hint->setText(QStringLiteral("点击条目复制 IP 到剪贴板，或按 Alt+数字"));
-        m_hint->setStyleSheet(QStringLiteral("font-size:12px;color:#94A3B8;"));
+        xtools::theme::applyStyle(
+            m_hint, QStringLiteral("font-size:12px;color:@%1;")
+                        .arg(xtools::theme::tokenName(xtools::theme::Color::TextFaint)));
     }
 
     // ------------------------------------------------------------ 公网 IP

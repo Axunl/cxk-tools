@@ -1,7 +1,7 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// 设置页：常规（热键/自启）、工具与插件、更新、关于。
+// 设置页：常规（热键/自启/主题）、工具与插件、更新、关于。
 //
 // 热键用自定义按钮 HotkeyButton 现场捕获组合键，而不是下拉框拼装 ——
 // 后者在跨平台时很难表达 macOS 的 ⌘/⌥，也让用户点几下才能设完。
@@ -15,6 +15,7 @@
 class Settings;
 class PluginManager;
 class QCheckBox;
+class QComboBox;
 class QLabel;
 
 /// 点击后进入"捕获"状态，按下的第一个带修饰键的组合即生效。
@@ -84,6 +85,7 @@ private:
     PluginManager *m_plugins = nullptr;
     HotkeyButton *m_hotkeyButton = nullptr;
     QLabel *m_hotkeyStatus = nullptr;
+    QComboBox *m_themeCombo = nullptr;
     QPushButton *m_updateButton = nullptr;
     QLabel *m_updateStatus = nullptr;
     QCheckBox *m_autoCheck = nullptr;

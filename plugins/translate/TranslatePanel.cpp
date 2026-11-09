@@ -1,4 +1,5 @@
 #include "TranslatePanel.h"
+#include "ThemePalette.h"   // 自绘控件用的颜色令牌
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -82,7 +83,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(isEnabled() ? QColor(0x94, 0xA3, 0xB8) : QColor(0xC0, 0xC9, 0xD6));
+        // 自绘小三角跟主题走：写死浅灰在深色底上几乎看不见
+        painter.setBrush(isEnabled() ? xtools::theme::color(xtools::theme::Color::TextFaint)
+                                     : xtools::theme::color(xtools::theme::Color::TextDisabled));
         QPainterPath path;
         path.moveTo(0.5, 2.0);
         path.lineTo(9.5, 2.0);
@@ -116,6 +119,21 @@ void TranslatePanel::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
     // 宿主换页时会重排焦点链，同步 setFocus 会被覆盖，必须延后一拍
     QTimer::singleShot(0, this, [this] { m_input->setFocus(); });
+}
+
+void TranslatePanel::setInputText(const QString &text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return;
+
+    // setPlainText 会发 textChanged -> scheduleAutoTranslate（1100 ms 防抖）；
+    // 这里直接 startTranslate()，进入工具就是「翻译中…」而不是等一秒才动。
+    // startTranslate 内部会停掉防抖定时器，不会重复发请求。
+    m_input->setPlainText(trimmed);
+    m_output->clear();
+    updateCount();
+    startTranslate();
 }
 
 bool TranslatePanel::eventFilter(QObject *watched, QEvent *event)
@@ -185,7 +203,10 @@ void TranslatePanel::buildUi()
     for (int i = 0; i < langs.size(); ++i)
         m_target->addItem(langs.at(i).label, i);
     m_target->setMinimumWidth(110);
-    m_target->setCurrentIndex(0);   // 默认译成中文
+    // 目标语言默认英语：最常见的使用场景是「中文（或自动检测到的其他语言）→ 英文」。
+    // 用展示名定位而不是硬编码索引，语言表顺序调整后默认值不会悄悄漂到别的语言。
+    const int englishIndex = m_target->findText(QStringLiteral("英语"));
+    m_target->setCurrentIndex(englishIndex >= 0 ? englishIndex : 0);
     toolbar->addWidget(m_target);
     addComboArrow(m_target);
 

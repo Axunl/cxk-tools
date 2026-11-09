@@ -1,5 +1,7 @@
 #include "TextKitPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "TextDiff.h"    // 纯逻辑：行级 + 字符级差异，可单独 include 做断言测试
 #include "TextLines.h"   // 纯逻辑：切行、加引号拼接、集合差
 
@@ -30,21 +32,21 @@ namespace {
 /// 停手 180ms 后再算，交互上感觉不到延迟，又不会卡顿。
 constexpr int kDiffDebounceMs = 180;
 
-/// 差异配色，集中定义避免各处写字面量漂移（浅色主题，与全局 qss 同一套色系）。
+/// 差异配色，集中定义避免各处写字面量漂移（语义令牌，浅/深各一套色值）。
 namespace palette {
-constexpr const char *hint = "#64748B";        // 常规提示
-constexpr const char *error = "#DC2626";       // 错误提示
-constexpr const char *removedBg = "#FEE2E2";   // 只在左侧 / 修改行的底色
-constexpr const char *removedMark = "#FCA5A5"; // 行内被删掉的字
-constexpr const char *addedBg = "#DCFCE7";     // 只在右侧 / 修改行的底色
-constexpr const char *addedMark = "#86EFAC";   // 行内新增的字
+constexpr auto hint = xtools::theme::Color::TextMuted;            // 常规提示
+constexpr auto error = xtools::theme::Color::Danger;              // 错误提示
+constexpr auto removedBg = xtools::theme::Color::DiffRemovedBg;   // 只在左侧 / 修改行的底色
+constexpr auto removedMark = xtools::theme::Color::DiffRemovedMark; // 行内被删掉的字
+constexpr auto addedBg = xtools::theme::Color::DiffAddedBg;       // 只在右侧 / 修改行的底色
+constexpr auto addedMark = xtools::theme::Color::DiffAddedMark;   // 行内新增的字
 } // namespace palette
 
 /// 小节标题（"引号" / "文本 A" 等），统一灰蓝色小字号。
 QLabel *makeCaption(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral("font-size:12px;font-weight:600;color:#64748B;"));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;font-weight:600;color:@text-muted;"));
     return label;
 }
 
@@ -53,7 +55,8 @@ QLabel *makeHint(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
     label->setWordWrap(true);
-    label->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(palette::hint)));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;color:@%1;")
+                                     .arg(xtools::theme::tokenName(palette::hint)));
     return label;
 }
 
@@ -62,7 +65,8 @@ QLabel *makeStatus(QWidget *parent)
 {
     auto *label = new QLabel(parent);
     label->setWordWrap(true);
-    label->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(QLatin1String(palette::hint)));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;color:@%1;")
+                                     .arg(xtools::theme::tokenName(palette::hint)));
     return label;
 }
 
@@ -102,7 +106,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(isEnabled() ? QColor(0x94, 0xA3, 0xB8) : QColor(0xC0, 0xC9, 0xD6));
+        // 自绘小三角跟主题走：写死浅灰在深色底上几乎看不见
+        painter.setBrush(isEnabled() ? xtools::theme::color(xtools::theme::Color::TextFaint)
+                                     : xtools::theme::color(xtools::theme::Color::TextDisabled));
         QPainterPath path;
         path.moveTo(0.5, 2.0);
         path.lineTo(9.5, 2.0);
@@ -176,7 +182,7 @@ void applyDiffHighlight(QPlainTextEdit *edit, const textdiff::Result &result, bo
 
         QTextEdit::ExtraSelection lineSelection;
         lineSelection.format.setBackground(
-            QColor(QLatin1String(leftSide ? palette::removedBg : palette::addedBg)));
+            xtools::theme::color(leftSide ? palette::removedBg : palette::addedBg));
         lineSelection.format.setProperty(QTextFormat::FullWidthSelection, true);
         lineSelection.cursor = QTextCursor(block);
         selections.append(lineSelection);
@@ -188,7 +194,7 @@ void applyDiffHighlight(QPlainTextEdit *edit, const textdiff::Result &result, bo
                 continue;   // 文本在算完之后被改过：宁可少标一段，也不要越界取字符
             QTextEdit::ExtraSelection markSelection;
             markSelection.format.setBackground(
-                QColor(QLatin1String(leftSide ? palette::removedMark : palette::addedMark)));
+                xtools::theme::color(leftSide ? palette::removedMark : palette::addedMark));
             QTextCursor cursor(block);
             cursor.setPosition(block.position() + mark.first);
             cursor.setPosition(block.position() + mark.first + mark.second, QTextCursor::KeepAnchor);
@@ -579,9 +585,9 @@ QWidget *TextKitPanel::buildSetTab()
     leftColumn->addWidget(m_leftCountLabel);
     m_onlyLeft = makeEditor(page, true);
     // 结果框染色（浅红/浅绿）与对比页的语义保持一致：红=左侧独有，绿=右侧独有。
-    m_onlyLeft->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#FEF6F6;border:1px solid #F1DADA;border-radius:8px;"
-        "padding:6px 8px;color:#7F1D1D;}"));
+    xtools::theme::applyStyle(m_onlyLeft, QStringLiteral(
+        "QPlainTextEdit{background:@diff-removed-pane-bg;border:1px solid @diff-removed-pane-border;"
+        "border-radius:8px;padding:6px 8px;color:@diff-removed-pane-text;}"));
     m_onlyLeft->setMinimumHeight(72);   // 结果通常只有几行，给个下限免得窗口变矮时被压没
     leftColumn->addWidget(m_onlyLeft, 2);
     columns->addLayout(leftColumn, 1);
@@ -595,9 +601,9 @@ QWidget *TextKitPanel::buildSetTab()
     m_rightCountLabel = makeCaption(QStringLiteral("只在右侧"), page);
     rightColumn->addWidget(m_rightCountLabel);
     m_onlyRight = makeEditor(page, true);
-    m_onlyRight->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#F4FDF7;border:1px solid #D6EFDF;border-radius:8px;"
-        "padding:6px 8px;color:#14532D;}"));
+    xtools::theme::applyStyle(m_onlyRight, QStringLiteral(
+        "QPlainTextEdit{background:@diff-added-pane-bg;border:1px solid @diff-added-pane-border;"
+        "border-radius:8px;padding:6px 8px;color:@diff-added-pane-text;}"));
     m_onlyRight->setMinimumHeight(72);
     rightColumn->addWidget(m_onlyRight, 2);
     columns->addLayout(rightColumn, 1);
@@ -748,7 +754,7 @@ void TextKitPanel::copyToClipboard(const QString &text, const QString &label, QL
 
 void TextKitPanel::setStatusText(QLabel *label, const QString &text, bool error)
 {
-    label->setStyleSheet(QStringLiteral("font-size:12px;color:%1;")
-                             .arg(QLatin1String(error ? palette::error : palette::hint)));
+    xtools::theme::applyStyle(label, QStringLiteral("font-size:12px;color:@%1;")
+                                     .arg(xtools::theme::tokenName(error ? palette::error : palette::hint)));
     label->setText(text);
 }

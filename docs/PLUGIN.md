@@ -89,7 +89,47 @@ add_subdirectory(plugins/mytool)
 重新构建（Windows `scripts\build.bat`，macOS / Linux `scripts/build.sh`），
 产物出现在 `build/bin/plugins/`（`.dll` / `.dylib` / `.so`），重启应用即可在首页网格里看到它。
 
-## 4. 注意事项
+## 4. 可选能力：接收首页带进来的内容
+
+首页搜索会识别用户意图：粘进一整段 JSON、粘进一张图片、或输入英文却什么都没搜到时，
+会给出建议，回车就把**那段内容本身**带进工具。默认实现不需要关心这件事；若想让自己的工具
+也能接收，就额外实现 `src/api/IToolInput.h` 里的可选接口：
+
+```cpp
+#include "ITool.h"
+#include "IToolInput.h"
+
+class MyToolPlugin : public QObject, public xtools::ITool, public xtools::IToolInput
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID XTOOLS_ITOOL_IID)
+    Q_INTERFACES(xtools::ITool xtools::IToolInput)   // 两个接口都要列出来
+public:
+    xtools::ToolInfo info() const override;
+    QWidget *createPanel(QWidget *parent = nullptr) override;
+    void setToolInput(const xtools::ToolInput &input) override;
+};
+
+void MyToolPlugin::setToolInput(const xtools::ToolInput &input)
+{
+    // 宿主保证：createPanel() 之后立刻调用，此时面板已创建、尚未显示
+    if (!m_panel || input.kind != xtools::ToolInput::Kind::Text)
+        return;                       // 与本工具无关的内容直接忽略
+    m_panel->setInputText(input.text);
+}
+```
+
+要点：
+
+- `ToolInput::kind` 只会是 `Text`（JSON 原文 / 待翻译文本）或 `Image`（要提取文字的图片）；
+  不适用的类型请**静默忽略**，不要报错弹窗。
+- 调用的时机是 `createPanel()` 之后、面板显示之前，所以要在插件对象里记住刚创建的面板
+  （用 `QPointer`，宿主随时可能销毁它）。实现里**不要**开事件循环或弹对话框。
+- 不实现这个接口完全没问题：宿主会照常打开工具，只是在日志里记一条「工具不接受带入内容」。
+- 这个接口有**自己的 IID**，加它不会影响 `XTOOLS_API_VERSION`；旧宿主不认识它，
+  新插件在旧宿主里也只是退化成「不带内容打开」。
+
+## 5. 注意事项
 
 - **不要给面板设 parent 归属**：`createPanel` 返回的 QWidget 由宿主接管，传进来的 `parent` 可能为空。
 - **面板会被创建多次**：每次进入工具宿主都会调用 `createPanel`（不缓存面板，输入值不留存），
@@ -104,6 +144,13 @@ add_subdirectory(plugins/mytool)
   （这是刻意的，避免虚表错位直接崩溃）。
 - **样式**：主程序已有全局 QSS，`QPushButton` / `QLineEdit` / `QPlainTextEdit` 直接用就是统一风格；
   想要强调按钮可以 `btn->setProperty("accent", true)`。
+- **不要写死颜色**：宿主支持浅色/深色两套主题（跟随系统或用户自选），插件是独立动态库，
+  宿主看不到你拼的样式串。需要局部样式时用 `xtools::theme::applyStyle(widget, "…")`，
+  颜色写成 `@bg` / `@text-faint` 这类令牌（表在 `src/api/ThemePalette.h`）；
+  自绘时用 `xtools::theme::color(xtools::theme::Color::X)` 取色。直接
+  `setStyleSheet("color:#94A3B8")` 的话，用户切到深色后这块会保持浅色配色。
+  换成 `applyStyle` 后，模板会挂在控件的 `xtoolsThemeStyle` 属性上，换肤时宿主遍历所有控件
+  重算颜色，**不需要重启**。有意必须保持字面量的地方（如二维码要白底才能扫）请在代码里注明。
   但 **`QComboBox` 例外**：全局 qss 为消掉原生 `::drop-down` 甩到圆角框外的边框写了规则，
   Qt 因此不再画下拉三角。每个用到 `QComboBox` 的面板都要自己补一个自绘箭头子控件
   （`WA_TransparentForMouseEvents`），并在 `eventFilter` 里跟着 Resize 摆到右侧 18px 区域
@@ -125,7 +172,7 @@ add_subdirectory(plugins/mytool)
   状态栏要写清「译文不会自动回填、需手动操作」。注意这类入口仍会被用户当成多余按钮，
   加之前先确认有人需要，别拿跳转凑「接入了某家服务」的数。
 
-## 5. 调试与验证
+## 6. 调试与验证
 
 加载失败不会崩主程序，原因写进日志，同时显示在「设置 → 工具与插件」：
 

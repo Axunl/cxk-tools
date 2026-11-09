@@ -22,5 +22,16 @@ xtools::ToolInfo JsonFmtPlugin::info() const
 
 QWidget *JsonFmtPlugin::createPanel(QWidget *parent)
 {
-    return new JsonFmtPanel(parent);
+    auto *panel = new JsonFmtPanel(parent);
+    m_panel = panel;   // 记住这一个，紧接着的 setToolInput() 要往里塞内容
+    return panel;
+}
+
+void JsonFmtPlugin::setToolInput(const xtools::ToolInput &input)
+{
+    // 只在宿主刚创建完面板时被调用；m_panel 已失效（宿主已销毁）就什么也不做。
+    // 图片输入与本工具无关，静默忽略（宿主只会把 JSON 文本送到这里）。
+    if (!m_panel || input.kind != xtools::ToolInput::Kind::Text)
+        return;
+    m_panel->setInputText(input.text);
 }

@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStyle>
 #include <QTextBrowser>
 #include <QTextEdit>
 #include <QUrl>
@@ -55,11 +56,12 @@ UpdateDialog::UpdateDialog(UpdateChecker *checker, Settings *settings, QWidget *
     layout->setSpacing(12);
 
     m_title = new QLabel(this);
-    m_title->setStyleSheet(QStringLiteral("color:#0F172A;font-size:17px;font-weight:600;"));
+    // 颜色/字号走 style.qss（#updateTitle 等），换肤时能跟着一起变
+    m_title->setObjectName(QStringLiteral("updateTitle"));
     layout->addWidget(m_title);
 
     m_subtitle = new QLabel(this);
-    m_subtitle->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    m_subtitle->setObjectName(QStringLiteral("updateSubtitle"));
     layout->addWidget(m_subtitle);
 
     m_notes = new QTextBrowser(this);
@@ -80,7 +82,7 @@ UpdateDialog::UpdateDialog(UpdateChecker *checker, Settings *settings, QWidget *
 
     m_status = new QLabel(this);
     m_status->setWordWrap(true);
-    m_status->setStyleSheet(QStringLiteral("color:#94A3B8;font-size:12px;"));
+    m_status->setObjectName(QStringLiteral("updateStatus"));
     layout->addWidget(m_status);
 
     auto *buttons = new QHBoxLayout;
@@ -242,8 +244,11 @@ void UpdateDialog::closeEvent(QCloseEvent *event)
 void UpdateDialog::setStatus(const QString &text, bool error)
 {
     m_status->setText(text);
-    m_status->setStyleSheet(error ? QStringLiteral("color:#DC2626;font-size:12px;")
-                                 : QStringLiteral("color:#94A3B8;font-size:12px;"));
+    // 状态色用动态属性交给 qss：写死 #DC2626 的话，深色主题下这行会偏暗，
+    // 而且换肤时不会跟着变（内联样式优先级高于全局样式表）。
+    m_status->setProperty("state", error ? QStringLiteral("error") : QString());
+    m_status->style()->unpolish(m_status);
+    m_status->style()->polish(m_status);
 }
 
 void UpdateDialog::updateButtons()

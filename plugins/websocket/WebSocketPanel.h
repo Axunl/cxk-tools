@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 #include "WsClient.h"
+#include "ThemePalette.h"   // 状态行/日志的颜色令牌
 
 #include <QWidget>
 
@@ -50,8 +51,8 @@ private:
 
     void applyState(WsClient::State state, const QString &detail);
     void setConfigEnabled(bool enabled);
-    void setStatus(const QString &text, const char *colorHex);
-    void appendLog(const QString &text, const char *colorHex);
+    void setStatus(const QString &text, xtools::theme::Color token);
+    void appendLog(const QString &text, xtools::theme::Color token);
 
     WsClient      *m_client = nullptr;
     QLineEdit     *m_url = nullptr;
@@ -92,9 +93,9 @@ private:
 
     QStringList selectedIds() const;
     void setConfigEnabled(bool enabled);
-    void setStatus(const QString &text, const char *colorHex);
+    void setStatus(const QString &text, xtools::theme::Color token);
     void updateStatusSummary();
-    void appendLog(const QString &text, const char *colorHex);
+    void appendLog(const QString &text, xtools::theme::Color token);
     QString connectUrl(quint16 port) const;
 
     WsServer      *m_server = nullptr;

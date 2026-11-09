@@ -1,6 +1,8 @@
 #include "JsonHighlighter.h"
 
-#include "JsonText.h"   // jsontext::stringEnd
+#include "JsonText.h"
+
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）   // jsontext::stringEnd
 
 #include <QColor>
 #include <QFont>
@@ -62,20 +64,22 @@ int scanNumber(const QString &text, int start)
 JsonHighlighter::JsonHighlighter(QTextDocument *document)
     : QSyntaxHighlighter(document)
 {
-    // 配色取自应用的浅色主题：键用强调蓝、字符串用绿、数字用琥珀、
+    // 配色取自主题令牌（浅/深各一套）：键用强调蓝、字符串用绿、数字用琥珀、
     // 字面量用紫、标点压成次要灰，保证扫一眼就能分出结构层次。
-    m_key.setForeground(QColor(QStringLiteral("#1D4ED8")));
+    // 注意：格式对象在构造时按当时的主题取值——面板每次打开都会新建编辑器，
+    // 所以换肤后重新进入工具即可得到新配色。
+    m_key.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxKey));
     m_key.setFontWeight(QFont::DemiBold);
 
-    m_string.setForeground(QColor(QStringLiteral("#047857")));
-    m_number.setForeground(QColor(QStringLiteral("#B45309")));
-    m_literal.setForeground(QColor(QStringLiteral("#7C3AED")));
-    m_punct.setForeground(QColor(QStringLiteral("#94A3B8")));
+    m_string.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxString));
+    m_number.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxNumber));
+    m_literal.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxLiteral));
+    m_punct.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxPunct));
 
     // 未闭合字符串：波浪下划线比纯变色更明确地表达"这里有问题"
-    m_error.setForeground(QColor(QStringLiteral("#DC2626")));
+    m_error.setForeground(xtools::theme::color(xtools::theme::Color::SyntaxError));
     m_error.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-    m_error.setUnderlineColor(QColor(QStringLiteral("#DC2626")));
+    m_error.setUnderlineColor(xtools::theme::color(xtools::theme::Color::SyntaxError));
 }
 
 void JsonHighlighter::highlightBlock(const QString &text)

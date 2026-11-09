@@ -1,5 +1,7 @@
 #include "ColorPickerPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "ColorProbe.h"
 #include "ColorText.h"
 
@@ -216,7 +218,7 @@ protected:
         paintCheckerboard(&p, r, 8);
         p.fillRect(r, m_color);
         p.restore();
-        p.setPen(QPen(QColor(QStringLiteral("#E2E8F0")), 1));
+        p.setPen(QPen(xtools::theme::color(xtools::theme::Color::Border), 1));
         p.drawRoundedRect(rf, 10, 10);
 
         // 文字颜色按「合成到白底后的实际观感」选黑白，保证深色/浅色底都读得清。
@@ -279,7 +281,7 @@ protected:
         if (m_image.isNull()) {
             p.fillRect(r, m_color);
         } else {
-            p.fillRect(r, QColor(QStringLiteral("#F1F5F9")));
+            p.fillRect(r, xtools::theme::color(xtools::theme::Color::BgSubtle));
             // 关掉平滑：放大镜要看到一个个像素方块，插值会把边界糊掉。
             p.setRenderHint(QPainter::SmoothPixmapTransform, false);
             const QImage scaled = m_image.scaled(r.size(), Qt::KeepAspectRatio,
@@ -298,7 +300,7 @@ protected:
             p.drawLine(c.x() - 9, c.y(), c.x() + 9, c.y());
             p.drawLine(c.x(), c.y() - 9, c.x(), c.y() + 9);
         }
-        p.setPen(QPen(QColor(QStringLiteral("#E2E8F0")), 1));
+        p.setPen(QPen(xtools::theme::color(xtools::theme::Color::Border), 1));
         p.drawRect(r);
     }
 
@@ -432,8 +434,8 @@ protected:
         p.restore();
 
         // hover 用主色加粗描边，静态属性下 hover 不可靠，这里靠 WA_Hover + 重画。
-        p.setPen(underMouse() ? QPen(QColor(QStringLiteral("#4F6BF6")), 2)
-                              : QPen(QColor(QStringLiteral("#E2E8F0")), 1));
+        p.setPen(underMouse() ? QPen(xtools::theme::color(xtools::theme::Color::Accent), 2)
+                              : QPen(xtools::theme::color(xtools::theme::Color::Border), 1));
         p.drawRoundedRect(rf, 6, 6);
     }
 

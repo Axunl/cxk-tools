@@ -23,6 +23,10 @@ class JsonFmtPanel : public QWidget
 public:
     explicit JsonFmtPanel(QWidget *parent = nullptr);
 
+    /// 宿主把首页搜索框里的 JSON 带进来时调用：整段放进输入框并排版。
+    /// 只做「放进去 + 格式化」，不做解析失败提示（宿主只在解析通过时才带内容）。
+    void setInputText(const QString &text);
+
 protected:
     /// 面板一显示就把焦点放进输入框（宿主换页/开独立窗口都走这里）
     void showEvent(QShowEvent *event) override;
@@ -35,7 +39,8 @@ private:
 
     /// 粘贴进来的内容先排版：整篇能解析就整篇重排，不能解析就静默不动。
     /// 不做去抖 —— 粘贴是一次性动作，用户期望"松手就排好"。
-    void formatPasted();
+    /// @param okStatus 成功时的状态文案；留空用"已格式化粘贴内容"。
+    void formatPasted(const QString &okStatus = QString());
 
     /// 用替换全文的方式写回，保留撤销栈（setPlainText 会清空它）。
     void replaceInputText(const QString &text, int cursorPos);

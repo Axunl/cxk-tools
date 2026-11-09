@@ -1,6 +1,7 @@
 #include "CalcTool.h"
 
-#include "ExprEval.h"   // 纯求值逻辑（可单独测试，见 AGENTS.md 的验证流程）
+#include "ExprEval.h"      // 纯求值逻辑（可单独测试，见 AGENTS.md 的验证流程）
+#include "ThemePalette.h"   // 颜色令牌：宿主与插件共用，深色主题下才不会留白底
 
 #include <QLabel>
 #include <QLineEdit>
@@ -37,9 +38,13 @@ public:
         layout->addWidget(m_hint);
 
         m_history = new QListWidget(this);
-        m_history->setStyleSheet(
-            QStringLiteral("QListWidget{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;}"
-                           "QListWidget::item{padding:6px 10px;border-bottom:1px solid #F1F5F9;color:#334155;}"));
+        // 用 applyStyle 而不是 setStyleSheet：模板会被记在控件上，换肤时宿主
+        // 能重算 @token，否则深色主题下这块列表会保持白底。
+        xtools::theme::applyStyle(
+            m_history,
+            QStringLiteral("QListWidget{background:@bg;border:1px solid @border;border-radius:8px;}"
+                           "QListWidget::item{padding:6px 10px;border-bottom:1px solid @border-subtle;"
+                           "color:@text-body;}"));
         layout->addWidget(m_history, 1);
 
         showIdleState();
@@ -59,23 +64,26 @@ public:
 
 private:
     /// 结果与提示的字号/颜色集中在这里，避免三处重复写字面量。
-    void applyResultStyle(const QString &color)
+    /// 传令牌而不是色值：换肤时宿主按令牌重算，颜色跟着主题走。
+    void applyResultStyle(xtools::theme::Color color)
     {
-        m_result->setStyleSheet(QStringLiteral("font-size:30px;font-weight:600;color:%1;").arg(color));
+        xtools::theme::applyStyle(m_result, QStringLiteral("font-size:30px;font-weight:600;color:@%1;")
+                                                .arg(xtools::theme::tokenName(color)));
     }
 
-    void applyHintStyle(const QString &color)
+    void applyHintStyle(xtools::theme::Color color)
     {
-        m_hint->setStyleSheet(QStringLiteral("font-size:12px;color:%1;").arg(color));
+        xtools::theme::applyStyle(m_hint, QStringLiteral("font-size:12px;color:@%1;")
+                                                .arg(xtools::theme::tokenName(color)));
     }
 
     /// 初始态（空输入）：显示 0 与操作说明。
     void showIdleState()
     {
         m_result->setText(QStringLiteral("0"));
-        applyResultStyle(QStringLiteral("#0F172A"));
+        applyResultStyle(xtools::theme::Color::Text);
         m_hint->setText(QStringLiteral("支持 + - * / % ^ 和括号，常量 pi / e。回车把结果存入下方历史。"));
-        applyHintStyle(QStringLiteral("#94A3B8"));
+        applyHintStyle(xtools::theme::Color::TextFaint);
     }
 
     /// 边输边算：合法就显示结果，不合法只显示提示，不打断输入。
@@ -91,15 +99,15 @@ private:
         QString error;
         if (calc::ExprEval(text).evaluate(&value, &error)) {
             m_result->setText(calc::formatNumber(value));
-            applyResultStyle(QStringLiteral("#0F172A"));
+            applyResultStyle(xtools::theme::Color::Text);
             m_hint->setText(QStringLiteral("回车记录到历史"));
-            applyHintStyle(QStringLiteral("#10B981"));
+            applyHintStyle(xtools::theme::Color::Success);
         } else {
             // 用破折号而不是保留上次的结果，避免用户把旧值当成新结果
             m_result->setText(QStringLiteral("—"));
-            applyResultStyle(QStringLiteral("#CBD5E1"));
+            applyResultStyle(xtools::theme::Color::TextDisabled);
             m_hint->setText(error);
-            applyHintStyle(QStringLiteral("#DC2626"));
+            applyHintStyle(xtools::theme::Color::Danger);
         }
     }
 

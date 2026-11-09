@@ -5,9 +5,9 @@
 
 ---
 
-# 第一部分：六条硬性规则
+# 第一部分：七条硬性规则
 
-以下六条对**每一次改动**都生效，不是建议。
+以下七条对**每一次改动**都生效，不是建议。
 
 ## 规则 1 — 代码必须有详细注释
 
@@ -127,6 +127,24 @@
   （与第七部分检查清单第 5 条一致）。
 - 自检方法：把本次 diff 涉及的章节在 README 里搜一遍，凡是 README 还在描述旧行为的，就是没同步完。
 
+## 规则 7 — 颜色只能走主题令牌
+
+- **qss 里不写死颜色**：`style.qss` 是浅/深共用的模板，颜色一律写成 `@bg` / `@text-faint`
+  这样的令牌，运行期由 `Theme` 按当前主题替换。写死 `#FFFFFF` 的后果是切到深色后那块
+  仍是白的，而且**不会报错**，只有肉眼能发现。
+- **C++ 里不写死颜色**：需要色值时用 `xtools::theme::color(Color::X)`（自绘）或
+  `xtools::theme::hex(Color::X)`（拼字符串）；设置控件样式用
+  `xtools::theme::applyStyle(widget, "…@token…")`，**不要**直接 `setStyleSheet` 拼色值。
+  `applyStyle` 会把模板记在控件的 `xtoolsThemeStyle` 属性上，换肤时宿主遍历所有控件重算，
+  插件是独立动态库也能跟着变（这是"切换主题不用重启"的关键，别绕过它）。
+- 新增颜色先在 `src/api/ThemePalette.h` 的 `table()` 里加一行（令牌名 + 浅色 + 深色），
+  再在 qss/代码里引用。**深色值不是浅色值的反相**：文字要抬亮度、底色要压饱和度，
+  选中/危险/成功这些语义色要单独挑，保证在深色底上仍能读清。
+- 有意保留字面量的例外要就地写注释说明为什么，例如：二维码预览必须白底（扫描器靠对比度）、
+  取色器的棋盘格与"建议文字色"、程序图标徽章配色。
+- 换肤后的验证：`--shot x.png --theme dark` 与浅色各截一张，确认没有残留白块；
+  想验证"运行时切换"就把 `--theme light` 启动后经设置页切到深色，插件面板也必须整块变色。
+
 ---
 
 # 第二部分：项目结构与依赖方向
@@ -143,10 +161,14 @@ cxk-tools/
 ├── src/
 │   ├── CMakeLists.txt          主程序目标；APP_SOURCES 是显式文件列表
 │   ├── api/ITool.h             唯一的 ABI 边界（纯头文件，不编成库）
+│   ├── api/ThemePalette.h      颜色令牌表（浅/深两套色值）+ 内联样式解析，宿主与插件共用
+│   ├── api/IToolInput.h        可选的「带内容进入」接口（独立 IID，不改 ITool 虚表）
 │   ├── core/                   纯逻辑，不 include 任何 ui/ 头文件
 │   │   ├── AppController.cpp   组装层：创建对象、连信号、处理命令行
 │   │   ├── Settings.*          配置单例，INI 落盘
+│   │   ├── Theme.*             主题：跟随系统/浅色/深色；落地调色板 + qss + 控件内联样式
 │   │   ├── ToolRegistry.*      工具条目容器 + 搜索评分
+│   │   ├── QueryIntent.h       纯逻辑：识别「JSON / 图片 / 英文」三种搜索意图（可单测）
 │   │   ├── LocalAppIndex.*     本机应用索引（开始菜单 / .app / .desktop）+ 启动
 │   │   ├── PluginManager.*     扫描 plugins/ 并用 QPluginLoader 加载
 │   │   ├── HotkeyManager.*     全局热键（Win32 / X11；macOS 待补）
@@ -178,10 +200,12 @@ cxk-tools/
 │   ├── ocr/{OcrTool.*, OcrPanel.*, OcrEngine.*, OcrCapture.*, OcrText.h}
 │   ├── cron/{CronTool.*, CronPanel.*, CronExpr.h}
 │   ├── jwt/{JwtTool.*, JwtLogic.h}
+│   ├── md5/{Md5Tool.*, Md5Logic.h}
 │   ├── regex/{RegexTool.*, RegexPanel.*, RegexMatch.h}
 │   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
-│   └── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
+│   ├── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
+│   └── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
 ├── assets/
 │   ├── app.ico                 Windows 图标（PNG 条目的多尺寸 ICO，被 src/app/app.rc.in 引用）
 │   ├── app.icns                macOS 图标（icp4~ic10，打包时拷进 .app/Contents/Resources）
@@ -223,6 +247,7 @@ cxk-tools/
 4. 首页就是磁贴网格（`HomePage` + `LauncherTile` + qss），不要另起 `QListView` + delegate 实现；
    也不需要独立浮层。磁贴固定 104×100，列数由 `columnsFor()` 按视口宽度算。
    工具与本机应用共用同一种磁贴，靠 `LauncherItem::kind` 区分点击行为与右键菜单。
+   搜索建议条（`IntentBanner`）是内容区里的普通控件，同样**不要**做成浮层或弹窗。
 5. 工具面板**不缓存**：每次进入工具都 `createPanel()` 新建面板；离开视图（回首页、进设置、
    收起窗口）即销毁面板（`destroyToolPanel()`），输入值随之清空。同一工具可以同时存在
    「内嵌面板」与「独立窗口面板」两份，插件不得假设自己是唯一实例。
@@ -543,12 +568,15 @@ cmake --build build\_verify\out
 build\_verify\out\verify.exe
 ```
 
-三个必须记住的坑（都实际踩过）：
+四个必须记住的坑（都实际踩过）：
 
 1. 直接 `call vcvars64.bat` 在受限环境里探不到 Windows SDK（`reg.exe` 被策略拦），`cl` 报找不到头文件
    —— 必须带 `build.bat` 里的 SDK 兜底段。
 2. 只 `find_package(Qt6 COMPONENTS Core)` 会因为 `QKeySequence` 缺 `Qt6::Gui` 编译失败。
 3. 测试程序缺 Qt DLL 时**不报错、直接退出且无输出**，运行前把 Qt 的 `bin` 加进 `PATH`。
+4. 有 Qt DLL 但 `qInfo()` / `qWarning()` 仍然**一个字都不输出**（退出码却是 0）：
+   Windows 上进程没有控制台窗口时（从 Git Bash 用管道跑就是这样），Qt 把日志改走
+   `OutputDebugString`。加 `QT_ASSUME_STDERR_HAS_CONSOLE=1` 就能重新落到 stderr。
 
 约定：不把带 `Q_OBJECT` 的类拉进临时工程（要么开 AUTOMOC，要么改用 `--shot` 看界面）；
 涉及 `Settings::instance()` 的用例会读写真实配置目录，测完把改过的键还原；**跑完 `rm -rf build/_verify`**。
@@ -609,6 +637,9 @@ add_subdirectory(plugins/mytool)
   否则旧插件会以错误的虚表布局被加载，崩溃点在 `info()` 第一行，堆栈毫无意义。
 - 加载失败不会崩主程序：原因写进 `logs/app.log`，同时显示在「设置 → 工具与插件」。
   **不支持热重载**：插件是进程内模块，换 `.dll` 必须重启（托盘菜单「重新扫描插件（重启）」）。
+- 想接首页带进来的内容（JSON / 图片 / 待翻译文本），额外实现 `IToolInput`（独立 IID，
+  不影响 `XTOOLS_API_VERSION`）。宿主在 `createPanel()` 之后立刻调 `setToolInput()`，
+  所以插件要自己记住刚创建的面板（`QPointer`），不适用的类型静默忽略。见 `docs/PLUGIN.md` 第 4 节。
 
 完整走查与典型写法见 [docs/PLUGIN.md](docs/PLUGIN.md)。
 
@@ -635,6 +666,30 @@ add_subdirectory(plugins/mytool)
 - 命中后再加 `min(usage, 20)` 频次加成，**封顶 20，压不过一级匹配**。
 - 空查询按 `1000 - min(usage, 500)` 排序（= 常用工具靠前），上限防止某个工具永远霸榜。
 - 同分按名称 `localeAwareCompare` 排序，保证结果稳定（否则会随插件加载顺序抖动）。
+
+## 首页搜索建议（`core/QueryIntent.h` + `IToolInput`）
+
+搜索框除了关键词匹配，还会识别三类「意图」，在结果最上方顶出一条可整行点击的建议条
+（`IntentBanner`），回车 / 点击即把内容带进对应工具：
+
+| 触发条件 | 目标工具 | 带进去的内容 |
+| --- | --- | --- |
+| 输入能解析成 JSON 对象 / 数组（`{...}` `[...]`，≤64 KB） | `jsonfmt` | `ToolInput::Kind::Text`，面板里直接排版 |
+| 剪贴板里是图片时按下 `Ctrl+V` / `Shift+Insert` | `ocr` | `ToolInput::Kind::Image`，面板里立刻识别 |
+| 工具与本机应用**都没有命中**且输入是英文 | `translate` | `ToolInput::Kind::Text`，面板里立刻翻译 |
+
+- 判定顺序：图片 > JSON > 翻译。词里只要出现非拉丁字母（含中文、西里尔、代理对字符）
+  就不算英文；裸标量（`123`、`"abc"`、`true`）不算 JSON —— 它们与普通搜索词无法区分。
+- **建议优先于第一个搜索结果**：`m_currentIndex < 0`（还没按方向键挑磁贴）时回车走建议，
+  按过方向键就按选中的磁贴走。这条要保住，否则用户回车会莫名打开别的东西。
+- 目标插件没加载时**不显示建议**（去掉 `m_intentData`），宁可什么都不给也不要摆一条回车没反应的建议。
+- 粘贴图片会清空搜索框里的文字；之后用户再打字会自动丢掉待处理图片（文字优先）。
+  `✕`、`Esc`、热键呼出、`--search` 都会同时清掉图片。
+- 内容交接：`HomePage::toolActivatedWithInput` → `MainWindow::showTool(id, true, input)` →
+  `createToolPanel()` 里 `qobject_cast<IToolInput *>(dynamic_cast<QObject *>(entry->tool))`。
+  `ITool` 不是 QObject，必须先 dynamic_cast；插件没实现该接口是合法状态，只记一条日志。
+- 纯逻辑（`looksLikeJson` / `isEnglishText` / `forText` / `forImage`）在 `QueryIntent.h` 里，
+  不依赖 QWidget，改判定规则时按规则 2 用临时断言程序验证。
 
 ## 本机应用搜索（`LocalAppIndex::search`）
 
@@ -794,6 +849,8 @@ add_subdirectory(plugins/mytool)
 - 分三层：`TranslateLogic.h`（纯逻辑：语言表、源语言检测、请求构造、四家响应解析、分段/拼接）、
   `TranslatePanel`（界面 + 异步调度）、`TranslateTool`（插件入口）。纯逻辑做成 header 是为了
   临时断言程序能直接 include；面板也放头文件，临时工程开 AUTOMOC 就能做端到端断言。
+- 源语言默认「自动检测语言」，**目标语言默认英语**（按展示名 `findText` 定位，别硬编码语言表
+  下标，顺序调整后默认值会悄悄漂走）；自动翻译默认开启，但初始空输入不会发请求。
 - 四家数据源按枚举顺序即降级顺序：有道演示接口（默认）→ 搜狗网页接口 → MyMemory →
   Google gtx（海外兜底）。JSON 形态完全不同，统一在 `parseResponse()` 里归一化成
   `ParseResult`，面板不感知差异；`RequestSpec.error` 让纯逻辑能在**不发请求**的前提下判
@@ -1026,6 +1083,39 @@ add_subdirectory(plugins/mytool)
   用轮询 + `QEventLoop` 的等待函数（`waitFor(pred, ms)`）。服务端另用独立实现的裸 socket
   Python 客户端验证过互操作（握手 / 掩码 / 分片 / ping-pong / 1002 拒绝），别只用自己的客户端自证。
 
+## 二维码（`plugins/qrcode`，插件内部）
+
+- 分层：`QrTables.h`（版本 / 容错 / 分块 / 校正图形位置表，由 python-qrcode 的 `base.rs_blocks`
+  导出生成，**改表要同步核对注释里每版的 data 字节数**）、`QrGalois.h`（GF(256) 与 RS，纯函数）、
+  `QrLayout.h`（画布规则：功能图形、保留位图、格式 / 版本信息、蛇形填充顺序）、
+  `QrEncode.*` / `QrDecode.*`（两个方向）、`QrCodePanel.*`（生成 / 识别两页）。
+- 编解码**共用** `QrLayout` 的 `reservedMap()` 与 `forEachDataModule()`：两边对「哪些模块属于功能图形、
+  数据按什么顺序填」的理解只要差一点，就会得到「自己生成的码自己解不开」这种最难查的错。
+  要改画布规则，只改 `QrLayout.h`，别在编码器里另写一份。
+- GF(256) 的表放在**函数内 static**，不要做命名空间级常量：插件是 DLL，跨翻译单元的静态初始化
+  顺序不保证，早于表初始化去查表会拿到全零。
+- **两个致命 bug 都出在码字生成 / 纠错上**，症状是「表面正常、内容全错」：
+  - `generator()` 取系数写成 `poly[degree - i]`：`poly` 有 degree+1 项、最高次恒为 1，这样取到的是
+    不存在的最高次并整体错位，生成的多项式全废。正确是 `poly[degree - 1 - i]`。
+    定位办法：把码字每 8 位一组打印，与 `python-qrcode` 的 `rs_blocks` 逐字节比对，「后半段全错」就是它。
+  - Forney 多乘了一个 `X_i`：fcr=0 时该因子已抵消，再乘就整组纠错失败（哪怕只翻了 1 个比特也报
+    「超出容错范围」）。用随机翻转 1 / 3 / 8 / 20 比特的用例一测即可定位。
+- 识别是「先粗后精、逐组合裁决」：1:1:3:1:1 游程扫候选 → 垂直 / 水平交叉复核 → 聚类 →
+  `shortlistCandidates()`（命中次数前 8 + 模块尺寸最小前 5 + 四方向极值）→ `rankTriples()` 枚举
+  **全部**几何可行组合并按跨度排序 → `decodeBinary()` 最多试 24 组 / 40 次，最终由格式信息 + RS 校验裁决。
+  **不要退化回「只取前 8 个候选点」**：v40 这种密集码的数据区里，1:1:3:1:1 片段可能比真定位图形更多、
+  更「标准」（实测命中 24 次），只取前几个必然漏掉真点。
+- 校正图形必须**质心精修**：粗搜落点偏 3px，透视校正会把误差放大到整个右下角（v2 以上全解不开）。
+  做法是取最接近粗定位点的黑像素做连通域填充，面积限制在 `期望面积 × 2.5` 以内（否则会连到外框），
+  再取质心。
+- 解码前把长边缩到 2000px 以内：v40 在 2000px 下每模块仍有 11px，够分辨；不缩的话手机照片
+  4000px 逐像素扫描太慢。
+- 段解析覆盖数字 / 字母数字 / byte / ECI / 结构化追加头 / FNC1；byte 段按 UTF-8 → GB18030 → Latin-1
+  依次尝试；**Kanji（Shift-JIS）明确报不支持**，不要默默当乱码输出。
+- UI：预览必须画在白底上——`QLabel#qrPreview` 直接写死 `background:#FFFFFF`，深色主题下跟着变深
+  的话扫描器可能读不出来。识别页投放区宽度由 `setMaximumSize(240, 320)` 定住（宽度撑左栏、
+  高度留一点弹性），缩略图在 `updateThumbnail()` 里按投放区现算，**不放大**（小图放大只会掩盖它糊）。
+
 ## 日志
 
 - 位置：`QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log`（不可漫游目录，避免企业漫游配置同步日志）。
@@ -1103,6 +1193,10 @@ add_subdirectory(plugins/mytool)
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 | `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |
+| 改完插件链接报 `LNK1104`「无法打开 …\plugins\xxx.dll」 | 上一次 `--shot` 或手动启动的 cxk-tools 还在后台跑着，DLL 被占用（先 `taskkill` 再删 DLL 会"成功"，但链接仍然写不进去） | 构建前 `tasklist \| findstr cxk-tools` 确认没有残留进程，有就结束掉；不要靠删 build 目录绕 |
+| 二维码生成的码自己解不开，别的解码器也读不出 | RS 生成多项式系数下标错位：`poly[degree - i]` 取到了恒为 1 的最高次，整条多项式错位 | 改成 `poly[degree - 1 - i]`；定位办法是把码字与 python-qrcode 的 `rs_blocks` 逐字节比对 |
+| 二维码纠错连翻 1 个比特都报「超出容错范围」 | Forney 里多乘了一个 `X_i`，而 fcr=0 时该因子已抵消 | `e_i = Ω(X_i⁻¹) / Π_{j≠i}(1 + X_j/X_i)`，不要再额外乘 `X_i` |
+| 空状态的提示文字在窗口缩放后自己消失 | `QLabel::setPixmap()` 会连 text 一起清掉，而 resize 钩子里调了 `setPixmap(QPixmap())` | 清空只放在 `clearDecoded()`；`updateThumbnail()` 里"没有图就直接 return" |
 | 用户开着程序时，脚本里的 `--check-update` / `--shot` 直接退出、什么都不输出 | 单实例互斥把它当成第二个实例，唤出旧窗口后自己结束 | 诊断命令（`--shot` / `--check-update`）在 `main.cpp` 里跳过 `tryLock()` 与 `setActivateHandler` |
 | 更新对话框里说明文字下面多出一根"横线" | `QTextBrowser` 默认按需横向滚动，长行触发横向滚动条 | `setLineWrapMode(QWidgetText::WidgetWidth)` + `setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff)` |
 | `package.bat` 打包时报 `vc_redist.x64.exe` 拒绝访问 | `windeployqt` 默认塞 25 MB 的 redist 安装器，且该文件被占用 | `--no-compiler-runtime` + 拷 app-local CRT DLL，prune 脚本里再兜底删一次 |

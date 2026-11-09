@@ -1,5 +1,7 @@
 #include "OcrPanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "OcrCapture.h"
 #include "OcrEngine.h"
 
@@ -72,20 +74,20 @@ OcrPanel::OcrPanel(QWidget *parent)
     m_result->setPlaceholderText(
         QStringLiteral("点「截图识别」后拖拽框选，或用「剪贴板图片 / 打开图片」导入一张图片。\n"
                        "识别出的文字会出现在这里，可以直接编辑、复制或保存。"));
-    // 插件内控件用局部内联样式：全局 qss 只按 objectName 命中主程序控件，
-    // 这里自给自足，不依赖宿主以后是否新增选择器（与 CalcPanel 的做法一致）。
-    m_result->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;"
-        "padding:12px;font-size:14px;color:#0F172A;}"));
+    // 插件内控件用局部样式：全局 qss 只按 objectName 命中主程序控件。
+    // 颜色写 @令牌，换肤时宿主会按模板重算（见 api/ThemePalette.h）。
+    xtools::theme::applyStyle(m_result, QStringLiteral(
+        "QPlainTextEdit{background:@bg;border:1px solid @border;border-radius:8px;"
+        "padding:12px;font-size:14px;color:@text;}"));
     body->addWidget(m_result, 1);
 
     m_preview = new QLabel(this);
     m_preview->setFixedWidth(220);
     m_preview->setMinimumHeight(160);
     m_preview->setAlignment(Qt::AlignCenter);
-    m_preview->setStyleSheet(QStringLiteral(
-        "QLabel{background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;"
-        "color:#94A3B8;font-size:12px;}"));
+    xtools::theme::applyStyle(m_preview, QStringLiteral(
+        "QLabel{background:@bg;border:1px solid @border;border-radius:8px;"
+        "color:@text-faint;font-size:12px;}"));
     body->addWidget(m_preview);
     layout->addLayout(body, 1);
 
@@ -253,6 +255,14 @@ void OcrPanel::recognizePixmap(const QPixmap &image)
                   .arg(result.backend), true);
 }
 
+void OcrPanel::setInputImage(const QImage &image)
+{
+    // 与「剪贴板图片」按钮完全相同的一条路径：落临时 PNG → 同步识别 → 排版
+    if (image.isNull())
+        return;
+    recognizePixmap(QPixmap::fromImage(image));
+}
+
 void OcrPanel::pasteFromClipboard()
 {
     QImage image = QGuiApplication::clipboard()->image();
@@ -343,9 +353,10 @@ void OcrPanel::clearAll()
 void OcrPanel::setStatus(const QString &text, bool ok)
 {
     m_status->setText(text);
-    m_status->setStyleSheet(
-        QStringLiteral("font-size:12px;color:%1;").arg(ok ? QStringLiteral("#94A3B8")
-                                                          : QStringLiteral("#DC2626")));
+    xtools::theme::applyStyle(m_status, QStringLiteral("font-size:12px;color:@%1;")
+                                             .arg(xtools::theme::tokenName(
+                                                 ok ? xtools::theme::Color::TextFaint
+                                                    : xtools::theme::Color::Danger)));
 }
 
 void OcrPanel::showPreview(const QPixmap &image)

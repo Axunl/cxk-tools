@@ -1,4 +1,5 @@
 #include "MemMonPanel.h"
+#include "ThemePalette.h"   // 自绘控件用的颜色令牌
 
 #include "MemText.h"   // 单位换算 / 筛选排序 / 回收候选（纯逻辑，可单独测试）
 
@@ -68,7 +69,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(isEnabled() ? QColor(0x94, 0xA3, 0xB8) : QColor(0xC0, 0xC9, 0xD6));
+        // 自绘小三角跟主题走：写死浅灰在深色底上几乎看不见
+        painter.setBrush(isEnabled() ? xtools::theme::color(xtools::theme::Color::TextFaint)
+                                     : xtools::theme::color(xtools::theme::Color::TextDisabled));
         QPainterPath path;
         path.moveTo(0.5, 2.0);
         path.lineTo(9.5, 2.0);

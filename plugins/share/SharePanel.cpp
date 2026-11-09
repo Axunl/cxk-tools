@@ -1,5 +1,7 @@
 #include "SharePanel.h"
 
+#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+
 #include "ShareServer.h"
 #include "ShareStore.h"
 
@@ -439,8 +441,10 @@ void SharePanel::refreshFiles()
         } else {
             // 源文件被移走/删掉：列表里留着但明确标出来，否则用户会以为服务坏了
             item->setText(0, entry.name + QStringLiteral("（已丢失）"));
-            item->setForeground(0, QBrush(QColor(QStringLiteral("#B6C0CC"))));
-            item->setForeground(1, QBrush(QColor(QStringLiteral("#B6C0CC"))));
+            // 丢失的文件用"禁用文字"色：深色主题下也要能看清是灰掉而不是无色
+            const QBrush missing(xtools::theme::color(xtools::theme::Color::TextDisabled));
+            item->setForeground(0, missing);
+            item->setForeground(1, missing);
             item->setToolTip(0, entry.path + QStringLiteral("\n文件已不在这个路径上"));
         }
         if (keepSelected.contains(entry.id))
