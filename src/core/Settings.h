@@ -66,8 +66,10 @@ public:
     QString configFilePath() const;
     void sync();
 
-    /// 默认热键。刻意不用 Alt+Space：Windows 把它保留给窗口系统菜单，
-    /// RegisterHotKey 必定失败。
+    /// 默认热键。刻意不用 Alt+Space：它确实能注册（实测 RegisterHotKey 成功、
+    /// 也能收到 WM_HOTKEY），但代价是抢掉所有窗口的系统菜单，而且录入时
+    /// Qt 根本收不到这个组合（见 HotkeyButton::nativeEvent）。用户想要就让他自己改，
+    /// 默认值不给人添这种麻烦。
     static QKeySequence defaultHotkey();
 
 private:

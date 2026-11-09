@@ -34,10 +34,19 @@ signals:
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
+#ifdef Q_OS_WIN
+    /// 兜住 Qt 在 Windows 上不派发的那一小撮组合（目前是 Alt+Space：
+    /// 系统把它当窗口菜单，连 QKeyEvent 都不生成）。见 .cpp 里的说明。
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+#endif
 
 private:
     void startCapture();
     void stopCapture();
+
+    /// 捕获成功后统一走这里：写入 m_sequence、退出捕获状态、发信号。
+    /// keyPressEvent 与 nativeEvent 两条入口共用，避免两处逻辑漂移。
+    void acceptSequence(Qt::KeyboardModifiers mods, int key);
 
     QKeySequence m_sequence;
     bool m_capturing = false;

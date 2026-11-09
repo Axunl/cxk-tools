@@ -18,6 +18,12 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#ifdef Q_OS_WIN
+// qt_windows.h 已经处理好 NOMINMAX / WIN32_LEAN_AND_MEAN 之类的开关，
+// 直接 include <windows.h> 会把 min/max 宏带进来跟 Qt 打架。
+#  include <QtCore/qt_windows.h>
+#endif
+
 // ---------------------------------------------------------------- HotkeyButton
 
 HotkeyButton::HotkeyButton(QWidget *parent)
@@ -72,6 +78,11 @@ void HotkeyButton::keyPressEvent(QKeyEvent *event)
     const Qt::KeyboardModifiers mods = event->modifiers()
                                        & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier
                                           | Qt::MetaModifier);
+    acceptSequence(mods, key);
+}
+
+void HotkeyButton::acceptSequence(Qt::KeyboardModifiers mods, int key)
+{
     if (mods == Qt::NoModifier) {
         // 裸键会被 RegisterHotKey/XGrabKey 拒绝，提前在这里提示，文案与后端保持一致
         setText(QStringLiteral("至少要一个 Ctrl/Alt/Shift/Meta"));
@@ -83,6 +94,44 @@ void HotkeyButton::keyPressEvent(QKeyEvent *event)
     setSequence(m_sequence);
     emit sequenceCaptured(m_sequence);
 }
+
+#ifdef Q_OS_WIN
+bool HotkeyButton::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+{
+    // Windows 把 Alt+Space 保留给窗口系统菜单（SC_KEYMENU）。Qt 收到
+    // WM_SYSKEYDOWN(VK_SPACE) 后就地把它转成菜单命令，**不会生成 QKeyEvent**，
+    // 于是 keyPressEvent 永远等不到这一次按键：用户按下 Alt+Space 时按钮一直停在
+    // 「请按下新的组合键…」，系统菜单弹出还可能把焦点抢走 → focusOutEvent 又把值
+    // 恢复成旧的。表现就是「录 Alt+Space 毫无反应」，而 RegisterHotKey 其实完全
+    // 支持这个组合（实测注册成功且能收到 WM_HOTKEY）。
+    //
+    // 所以这里在原生消息层把它拦下来：自己读修饰键状态换算组合，并吞掉消息，
+    // 免得真的弹出窗口菜单。只在捕获状态、且确实是 Space 时介入，其它按键仍走
+    // Qt 的正常派发路径（keyPressEvent），不改变已有行为。
+    if (m_capturing && eventType == QByteArrayLiteral("windows_generic_MSG")) {
+        auto *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_SYSKEYDOWN && msg->wParam == VK_SPACE) {
+            Qt::KeyboardModifiers mods;
+            if (GetKeyState(VK_MENU) & 0x8000)
+                mods |= Qt::AltModifier;
+            if (GetKeyState(VK_CONTROL) & 0x8000)
+                mods |= Qt::ControlModifier;
+            if (GetKeyState(VK_SHIFT) & 0x8000)
+                mods |= Qt::ShiftModifier;
+            if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
+                mods |= Qt::MetaModifier;
+
+            if (mods != Qt::NoModifier) {
+                acceptSequence(mods, Qt::Key_Space);
+                if (result)
+                    *result = 0;
+                return true;
+            }
+        }
+    }
+    return QPushButton::nativeEvent(eventType, message, result);
+}
+#endif
 
 void HotkeyButton::focusOutEvent(QFocusEvent *event)
 {

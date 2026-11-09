@@ -678,8 +678,16 @@ add_subdirectory(plugins/mytool)
 
 ## 全局热键
 
-- 默认 `Ctrl+Alt+Space`（`Settings::defaultHotkey()`）。**不要改成 `Alt+Space`**：Windows 把它留给窗口系统菜单，
-  `RegisterHotKey` 必定失败。
+- 默认 `Ctrl+Alt+Space`（`Settings::defaultHotkey()`）。`Alt+Space` 是**能用的**：实测 `RegisterHotKey`
+  注册成功、`WM_HOTKEY` 正常派发、能唤出窗口。它不做默认值只是因为会抢掉所有窗口的系统菜单
+  （用户主动改过去是他的选择，不要去拦）。
+- **`Alt+Space` 在 Windows 上有个 Qt 层的坑，录制和注册是两个独立环节**：
+  系统把它当窗口菜单处理，Qt 收到 `WM_SYSKEYDOWN(VK_SPACE)` 后直接转成 `SC_KEYMENU`，
+  **根本不生成 `QKeyEvent`**，于是 `HotkeyButton::keyPressEvent` 永远等不到那一次按键 ——
+  表现为「点了按钮按 Alt+Space 毫无反应」，系统菜单弹出还可能抢走焦点触发 `focusOutEvent`，
+  把值恢复成旧的。`HotkeyButton::nativeEvent` 专门补了一条原生消息通道：只在捕获态且
+  `VK_SPACE` 时介入，自己用 `GetKeyState` 读修饰键，并吞掉消息避免真的弹菜单。
+  两条入口共用 `acceptSequence()`，别在 `keyPressEvent` 里再复制一份逻辑。
 - Windows：`RegisterHotKey` 注册到 message-only 窗口（`HWND_MESSAGE`），`WndProc` 收 `WM_HOTKEY`。
 - Linux：X11 `XGrabKey` 抓根窗口，要连带 `CapsLock`/`NumLock` 的 4 种 lock mask；
   占用检测靠 `XSetErrorHandler` + `XSync` 捕 `BadAccess`；Wayland 拿不到 `Display*`，直接返回可读失败文案。
@@ -1090,6 +1098,8 @@ add_subdirectory(plugins/mytool)
 | 手机上打开的共享地址转圈连不上，电脑上同一个端口却是通的 | `QNetworkInterface` 把 VMware / Hyper-V / WSL / Docker 的虚拟网卡一起列出来，实测 VMnet8 会抢首位 | 用 `looksLikeVirtualNic()` 按名字降权 + 网段加权 + `.1` 网关位降权，见第五部分共享一节 |
 | 网页收到的中文文件名是乱码，`+` 变成了空格 | 上传时文件名塞进 header，中文过不去；改用 `QUrlQuery::queryItemValue()` 解码又按 form 规则把 `+` 还原成空格 | 文件名走 percent-encoded（`X-File-Name`），解码用自己写的 `percentDecode()`，**保留 `+`** |
 | 共享开两个窗口就变成两个端口、两份列表 | 宿主 `createPanel()` 不缓存面板，把服务挂在面板上就等于每个面板一个服务 | `ShareStore` / `ShareServer` 用进程级单例且不析构，见第五部分共享一节 |
+| 设置页里按 `Alt+Space` 毫无反应，`hotkey` 还是旧值 | Windows 把它当窗口系统菜单：Qt 拿到 `WM_SYSKEYDOWN(VK_SPACE)` 直接转 `SC_KEYMENU`，**不生成 `QKeyEvent`**，`keyPressEvent` 永远等不到；菜单弹出还可能抢走焦点让 `focusOutEvent` 恢复旧值 | 录制不能只靠 `keyPressEvent`：`HotkeyButton::nativeEvent` 里补原生消息通道（`GetKeyState` 读修饰键 + 吞掉消息），见第五部分「全局热键」 |
+| 设了某个热键后，别的程序里同名快捷键全失效（如 `Ctrl+A` 不能全选） | `RegisterHotKey` 是系统级独占，单修饰键 + 字母这种「常见编辑快捷键」被抢走就全局生效 | 这不是 bug 是全局热键的固有语义：默认值只给 `Ctrl+Alt+Space`，交付时提醒用户别拿单修饰键 + 字母当热键 |
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 | `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |
