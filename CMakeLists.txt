@@ -14,7 +14,7 @@ if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(cxk-tools VERSION 0.2.0 LANGUAGES CXX)
+project(cxk-tools VERSION 0.3.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # 版本号的单一来源就是上面这一行 project()。这里额外做两件事：
