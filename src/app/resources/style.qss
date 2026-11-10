@@ -158,6 +158,24 @@ QToolButton#homeSearchClear:pressed {
     color: @text-body;
 }
 
+/* 数字键角标：磁贴左上角的 1~9，按对应数字直接打开这一项（见 HomePage 的
+   eventFilter）。用 @bg 白底而不是半透明：磁贴选中时底色是 accent-soft-strong，
+   白块能明显浮起来；透明底会被压在选中色里看不清。 */
+#tileShortcut {
+    font-size: 10px;
+    font-weight: 600;
+    color: @text-muted;
+    background: @bg;
+    border: 1px solid @border;
+    border-radius: 6px;
+}
+
+/* 选中/悬停时角标跟着提亮一点，视线落在哪个磁贴上时序号也是可读的 */
+#launcherTile[current="true"] #tileShortcut {
+    color: @accent-text;
+    border-color: @border-accent;
+}
+
 /* 搜索建议条（IntentBanner）：贴进 JSON / 图片，或英文没搜到时的「交给哪个工具」。
    整条可点，所以 hover 要给明确反馈；默认态用极浅的靛蓝底与搜索结果区分开。 */
 #intentBanner {
@@ -191,10 +209,21 @@ QToolButton#homeSearchClear:pressed {
     padding: 3px 8px;
 }
 
+/* 页脚左右留白由 HomePage 的 footerRow 布局给（这里写 padding 会让右侧的
+   数字键提示跟着缩进，两块文字对不齐）。 */
 #homeFooter {
     color: @text-faint;
     font-size: 11px;
-    padding: 4px 28px 10px 28px;
+}
+
+/* 数字键提示：与左侧统计同一行、靠右，颜色更弱一点，避免抢走「已加载」的信息 */
+#homeShortcutHint {
+    color: @text-faint;
+    font-size: 11px;
+    background: @bg-subtle;
+    border: 1px solid @border-subtle;
+    border-radius: 8px;
+    padding: 1px 8px;
 }
 
 #homeHint {

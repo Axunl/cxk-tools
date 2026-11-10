@@ -927,11 +927,21 @@ add_subdirectory(plugins/mytool)
 - **取色期间系统鼠标光标变十字准星（+）**：`CrosshairCursor` 类封装——Windows 用原生
   `SetSystemCursor(CopyImage(LoadCursor(IDC_CROSS)), OCR_NORMAL)` 替换系统级 OCR_NORMAL 光标
   （跨应用生效，Qt 的 `setOverrideCursor` 只对本应用窗口有效，鼠标移到别的应用就变回箭头）。
-  备份原箭头句柄、结束后 `SetSystemCursor(s_backup, OCR_NORMAL)` 恢复；`grab()`/`release()` 幂等。
   两个坑：① `OCR_NORMAL` 等常量在 WinUser.h 里被 `#ifdef OEMRESOURCE` 保护，而 OEMRESOURCE 在
   `WIN32_LEAN_AND_MEAN` 下不自动定义，需在 include windows.h 前显式 `#define OEMRESOURCE`；
   ② `SetSystemCursor` 会 destroy 传入句柄，`LoadCursor` 返回的共享句柄不能直接传，必须
   `CopyImage(..., IMAGE_CURSOR, 0, 0, 0)`（flags=0 复制副本、不删原图）先复制一份。
+- **恢复光标绝对不能用「备份原句柄再 SetSystemCursor 写回」**（2026-11-10 实修）：SetSystemCursor
+  改的是**系统级持久设置**，和进程生命周期无关。① 进程没走到 release()（宿主关工具、退出应用、
+  插件卸载、被 taskkill）时 OCR_NORMAL 永远是十字，整个桌面鼠标都变成 +，只能重启或外部复位；
+  ② 一旦发生过，下一次 `LoadCursor(nullptr, IDC_ARROW)` 备份到的「标准箭头」其实已经是十字，
+  release() 写回去等于把十字写回系统——表现为「取完色鼠标一直是十字」。
+  正确做法是 `SystemParametersInfoW(SPI_SETCURSORS, 0, nullptr, SPIF_SENDCHANGE)`：让系统按
+  注册表**整体重载**光标方案（用户自定义光标也原样重载），不依赖备份、能自愈任意残留。
+  同时铺三道复位：`release()`（Windows 上**不按 s_active 挡门**，顺手清掉上次强杀的残留）、
+  `~ColorPickerPanel()`（关工具/卸载）、`qApp->aboutToQuit`（退出应用），外加构造时复位一次做自愈。
+  另注：`GetCursorInfo()` 不跟踪 OCR_NORMAL 的替换，别拿它当验证手段（实测始终返回桌面窗口
+  自己的箭头句柄）；验证只能看 SPI 调用返回值 + 肉眼观察。
   macOS/Linux 无等价的「全局替换系统光标」Qt 公开接口，退而用 `setOverrideCursor(Qt::CrossCursor)`
   （仅本应用窗口内生效），不假装成功。
 - **光标在本应用窗口内不采样**：`cursorOverOwnWindow()` 遍历 `QApplication::topLevelWidgets()`

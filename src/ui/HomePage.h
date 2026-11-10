@@ -16,6 +16,9 @@
 //   * 磁贴顺序 = 键盘导航顺序（最近 → 工具 → 应用），不做去重：同一项可能同时
 //     出现在两组里（与 uTools 一致），保持「下标 = 视觉位置」，否则方向键会跳到
 //     跟眼睛看到的不一致的地方。
+//   * 数字键直选（详见 handleShortcutNumber 的注释与 README）：结果有两个以上时，
+//     前 9 个磁贴按视觉顺序标 1~9；搜索框为空时裸数字直接打开第 N 项，搜索框有字
+//     时裸数字照常输入（不打断 base64 / 360 这类关键词），改用 Ctrl+数字直选。
 //   * 搜索框顶部会按输入内容给一条「建议条」（SearchIntent 区段）：贴进一段 JSON、
 //     贴进一张图片、或输入英文却什么都没搜到时，建议条把「交给哪个工具、会带什么
 //     内容进去」摆在最前面 —— 此时回车走建议，而不是走搜索结果。
@@ -81,6 +84,12 @@ public:
     void setCurrent(bool on);
     bool isCurrent() const { return m_current; }
 
+    /// 设置数字角标：1~9 显示在左上角，<=0 隐藏。
+    ///
+    /// 只负责「画」，按键由 HomePage 统一处理 —— 磁贴自己拿不到键盘事件
+    /// （焦点一直在搜索框，也没有快捷键作用域可以挂）。
+    void setShortcutNumber(int number);
+
 signals:
     void activated(const QString &id);
     void popOutRequested(const QString &toolId);   ///< 仅工具：在独立窗口打开
@@ -102,6 +111,8 @@ private:
     QIcon m_icon;         ///< 图标在 showEvent 里按真实 DPR 取像素，构造时拿不到正确 dpr
     QLabel *m_iconLabel = nullptr;
     QLabel *m_name = nullptr;
+    QLabel *m_shortcut = nullptr;   ///< 左上角的数字角标，不参与布局（绝对定位，见构造函数）
+    int m_shortcutNumber = 0;       ///< 当前角标数字，0 = 不显示
     bool m_current = false;
     bool m_hovered = false;
 };
@@ -189,6 +200,15 @@ private:
     void updateFooter();
     void showEmptyState(bool empty);
 
+    // ------------------------------------------------------------ 数字键直选
+    /// 按视觉顺序给前 9 个磁贴标号；结果只有一个时全部去掉角标（回车就是它）。
+    /// 每次 rebuild() 都要重跑：磁贴是新建的，编号也跟着顺序变了。
+    void applyShortcutNumbers();
+    /// 打开第 number 项（1 起）。序号没有对应磁贴时返回 false，让按键回到搜索框当输入。
+    bool activateNumber(int number);
+    /// 发起「打开这个磁贴」：工具走 toolActivated，应用走 appActivated。
+    void activateTile(LauncherTile *tile);
+
     // ------------------------------------------------------------ 搜索建议
     /// 按当前输入算出建议并刷新建议条；query 为空或建议的工具没加载时不显示。
     void updateIntent(const QString &query, bool hasToolHits);
@@ -231,6 +251,7 @@ private:
     QWidget *m_emptyBox = nullptr;   ///< 一个工具都没有时的引导块
     QLabel *m_noResult = nullptr;    ///< 搜索无命中的提示（与空工具区分开）
     QLabel *m_footer = nullptr;
+    QLabel *m_shortcutHint = nullptr;   ///< 页脚右侧的数字键提示，没有角标时隐藏
 
     QList<LauncherTile *> m_tiles;   ///< 视觉顺序 = 键盘导航顺序
     QList<LauncherTile *> m_recentTiles;

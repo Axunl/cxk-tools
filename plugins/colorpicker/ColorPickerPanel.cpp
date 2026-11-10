@@ -51,16 +51,19 @@ namespace {
 /// 跨应用生效；结束后必须恢复，否则整个系统鼠标都一直是十字。
 ///
 /// 三平台策略：
-///   - Windows：SetSystemCursor + CopyCursor 替换 OCR_NORMAL，备份原句柄用于恢复；
+///   - Windows：SetSystemCursor 替换 OCR_NORMAL；恢复时用 SPI_SETCURSORS 让系统按
+///     注册表**整体重载**光标方案（不备份、不写回，原因见 resetSystemCursors）；
 ///   - macOS / Linux：无等价的「全局替换系统光标」的 Qt 公开接口，退而用
 ///     QGuiApplication::setOverrideCursor(Qt::CrossCursor)（仅本应用窗口内生效），
 ///     不静默假装成功——取色说明文案已提示用户「十字准星以放大镜中心为准」。
-/// 其余平台同 macOS/Linux 兜底。句柄生命周期由本类用 static 局部变量持有，
-/// 进程内只备份/恢复一次，避免每次取色都 CopyCursor 泄漏 GDI 资源。
+/// 其余平台同 macOS/Linux 兜底。
+///
+/// 幂等性：grab()/release() 用 s_active 挡门，重复调用不会叠加 override cursor，
+/// 也不会对已经复位的光标再做一次系统调用。
 class CrosshairCursor
 {
 public:
-    /// 切到十字准星。幂等：重复调用不会叠加 override cursor。
+    /// 切到十字准星。幂等。
     static void grab()
     {
         if (s_active)
@@ -68,13 +71,8 @@ public:
         s_active = true;
 #if defined(Q_OS_WIN)
         // LoadCursor 返回的是系统共享光标句柄，不能直接交给 SetSystemCursor（后者会
-        // destroy 传入句柄，破坏共享光标）。CopyImage 复制一份私有副本，flags=0 表示
-        // 「复制成功后返回副本、不删除原图」。备份的是「替换前」的箭头副本，
-        // 恢复时 SetSystemCursor(s_backup, OCR_NORMAL) 写回。
-        if (!s_backup) {
-            s_backup = static_cast<HCURSOR>(
-                CopyImage(LoadCursor(nullptr, IDC_ARROW), IMAGE_CURSOR, 0, 0, 0));
-        }
+        // destroy 传入句柄，破坏共享光标资源）。CopyImage 复制一份私有副本，flags=0
+        // 表示「复制成功后返回副本、不删除原图」。
         HCURSOR cross = static_cast<HCURSOR>(
             CopyImage(LoadCursor(nullptr, IDC_CROSS), IMAGE_CURSOR, 0, 0, 0));
         if (cross)
@@ -85,27 +83,48 @@ public:
 #endif
     }
 
-    /// 恢复原箭头光标。幂等。
+    /// 复位系统光标（Windows）/ 弹出 override cursor（其余平台）。
+    ///
+    /// Windows 上**不按 s_active 挡门**：系统光标是跨进程持久的，上一次运行如果被
+    /// 强杀（没走到本函数的正常路径），整个桌面的鼠标会一直是十字；这次运行只要调用
+    /// 一次 SPI_SETCURSORS 就能顺手复位，属于廉价自愈。非 Windows 平台必须保留挡门，
+    /// 否则会多弹一次 override cursor 栈，导致光标状态错乱。
     static void release()
     {
+#if defined(Q_OS_WIN)
+        s_active = false;
+        resetSystemCursors();
+#else
         if (!s_active)
             return;
         s_active = false;
-#if defined(Q_OS_WIN)
-        if (s_backup) {
-            SetSystemCursor(s_backup, OCR_NORMAL);
-            s_backup = nullptr;   // 已经写回系统，句柄归系统所有，不再二次释放
-        }
-#else
         QGuiApplication::restoreOverrideCursor();
 #endif
     }
 
+#if defined(Q_OS_WIN)
+    /// 把系统光标整体复位成「注册表里的当前光标方案」。
+    ///
+    /// **刻意不用「备份原光标句柄，结束时 SetSystemCursor 写回」那套。** 两个原因：
+    ///   1. SetSystemCursor 改的是**系统级持久设置**，和进程生命周期无关。进程只要
+    ///      没走到 release()（宿主关掉工具、退出应用、插件卸载、被杀进程），OCR_NORMAL
+    ///      就一直是十字，整个桌面的鼠标都变成 +，直到重启或有人重置。
+    ///   2. 一旦上一条发生过，下一次 grab() 里 `LoadCursor(nullptr, IDC_ARROW)` 取到的
+    ///      「标准箭头」其实已经被换成十字，备份到的就是十字本身；release() 再写回去，
+    ///      等于把十字写回系统 —— 于是「取完色鼠标永远是十字」。实测就是这个现象。
+    ///
+    /// SPI_SETCURSORS 让系统重新从注册表加载全部光标（用户自定义的光标方案也会原样
+    /// 重载，不会被重置成默认箭头），是唯一能自愈、也不依赖进程是否正常退出的复位方式。
+    static void resetSystemCursors()
+    {
+        // 失败也不上报：这是收尾动作，弹窗/日志刷屏比光标多留半秒更烦人。
+        // 返回值只在 --shot 验证时用 qInfo 打印过，结论是恒为 1（成功）。
+        ::SystemParametersInfoW(SPI_SETCURSORS, 0, nullptr, SPIF_SENDCHANGE);
+    }
+#endif
+
 private:
     static inline bool s_active = false;
-#if defined(Q_OS_WIN)
-    static inline HCURSOR s_backup = nullptr;
-#endif
 };
 
 /// 实时查询「左键此刻是否按下」。
@@ -460,6 +479,28 @@ ColorPickerPanel::ColorPickerPanel(QWidget *parent)
     // 给一个项目主色作为初始值，界面打开就不是空白，也顺手展示各格式的样子。
     applyColor(QColor(79, 107, 246), true, true);
     m_loupe->setSolid(m_color);
+
+    // 退出应用时的最后一道保险：面板析构不一定发生在「窗口关闭」之后（宿主可能在
+    // 进程退出流程里批量删控件，顺序不保证），而系统光标是进程级持久的。
+    // 绑 this 为 context，面板先销毁则连接自动断开，不会碰到悬空对象。
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [] { CrosshairCursor::release(); });
+
+    // 再补一道自愈：上一次运行若被强杀（taskkill / 宿主崩溃），OCR_NORMAL 可能还是
+    // 十字，且那种残留不会随进程退出而消失。这里在打开工具时就复位一次，用户不必
+    // 等到「取一次色」才恢复正常鼠标。
+    CrosshairCursor::release();
+}
+
+ColorPickerPanel::~ColorPickerPanel()
+{
+    // 关工具 / 关窗口 / 插件卸载：不管走到哪条路径，系统光标都必须复位。
+    // release() 幂等，正常取完色的场景这里是一次空操作。
+    CrosshairCursor::release();
+
+    // 吸管浮窗是没有父对象的独立顶层窗口（脱离宿主窗口树才能跟到屏幕任意位置），
+    // 不手动 delete 会泄漏，且它可能仍显示在屏幕上。
+    delete m_eyedropper;
+    m_eyedropper = nullptr;
 }
 
 void ColorPickerPanel::buildUi()

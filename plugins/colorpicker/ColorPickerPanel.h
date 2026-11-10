@@ -41,6 +41,11 @@ class ColorPickerPanel : public QWidget
 public:
     explicit ColorPickerPanel(QWidget *parent = nullptr);
 
+    /// 兜底复位系统光标：用户在吸管模式下关掉工具 / 退出应用 / 插件被卸载时，
+    /// 正常流程里的 hideEyedropper() 可能还没轮到执行，而 Windows 的系统光标替换
+    /// 是**进程级持久**的——不复位就会让整个桌面的鼠标一直是十字（实测过）。
+    ~ColorPickerPanel() override;
+
 protected:
     /// 面板一显示即自动进入「吸管模式」：收起身后窗口、显示吸管浮窗、开始取色。
     /// 用户点开取色器就是要取色，没必要先看到静态面板再点按钮。延一轮事件循环再

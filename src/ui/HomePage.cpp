@@ -50,6 +50,12 @@ constexpr int kSearchClearSize = 20;
 constexpr int kSearchClearGap = 8;
 constexpr int kNameMaxWidth = kTileWidth - 12;
 constexpr int kIntentIcon = 34;   ///< 建议条左侧工具图标
+/// 数字角标：18px 方块放在左上角的 3px 留白里。位置写死是因为磁贴尺寸固定、
+/// 图标居中（x 从 28 开始），角标只占 x∈[3,21]，不会碰到图标。
+constexpr int kShortcutSize = 18;
+constexpr int kShortcutMargin = 3;
+/// 可直选的项数上限：键盘上只有 1~9 九个直选位，第 10 项起只能方向键/回车。
+constexpr int kMaxShortcut = 9;
 
 } // namespace
 
@@ -98,6 +104,30 @@ LauncherTile::LauncherTile(const LauncherItem &item, QWidget *parent)
 
     layout->addLayout(iconRow);
     layout->addWidget(m_name);
+
+    // 数字角标：绝对定位而不是塞进上面那个 QVBoxLayout —— 布局会把它当成第三行，
+    // 磁贴固定 100 高，多一行就会把图标和名称往上挤。默认隐藏，由 setShortcutNumber 控制。
+    m_shortcut = new QLabel(this);
+    m_shortcut->setObjectName(QStringLiteral("tileShortcut"));
+    m_shortcut->setAlignment(Qt::AlignCenter);
+    m_shortcut->setFixedSize(kShortcutSize, kShortcutSize);
+    m_shortcut->move(kShortcutMargin, kShortcutMargin);
+    m_shortcut->hide();
+}
+
+void LauncherTile::setShortcutNumber(int number)
+{
+    m_shortcutNumber = number > 0 ? number : 0;
+
+    if (m_shortcutNumber <= 0) {
+        m_shortcut->hide();
+        return;
+    }
+
+    m_shortcut->setText(QString::number(m_shortcutNumber));
+    m_shortcut->show();
+    // 图标是后加进布局的兄弟控件，raise 一下保证角标压在图标/底色之上
+    m_shortcut->raise();
 }
 
 void LauncherTile::setCurrent(bool on)
@@ -482,9 +512,24 @@ void HomePage::buildUi()
     m_footer = new QLabel(this);
     m_footer->setObjectName(QStringLiteral("homeFooter"));
 
+    // 数字键提示单独一块：与左边「已加载 N 个工具」不是同一类信息，
+    // 拼进同一个字符串会被读成第三项统计。没有角标时整块隐藏。
+    m_shortcutHint = new QLabel(this);
+    m_shortcutHint->setObjectName(QStringLiteral("homeShortcutHint"));
+    m_shortcutHint->hide();
+
+    // 页脚左右留白挪到这层布局上（qss 的 #homeFooter 不再带 padding），
+    // 这样两块文字共用同一条基线与左右边界。
+    auto *footerRow = new QHBoxLayout;
+    footerRow->setContentsMargins(kPageMargin, 4, kPageMargin, 10);
+    footerRow->setSpacing(12);
+    footerRow->addWidget(m_footer);
+    footerRow->addStretch(1);
+    footerRow->addWidget(m_shortcutHint);
+
     layout->addWidget(m_top);
     layout->addWidget(m_scroll, 1);
-    layout->addWidget(m_footer);
+    layout->addLayout(footerRow);
 }
 
 void HomePage::clearTiles()
@@ -613,8 +658,9 @@ void HomePage::rebuild()
                             : QStringLiteral("没有找到匹配的工具或应用"));
     m_noResult->setVisible((imageMode || !query.isEmpty()) && !hasHits && !m_intentData.valid());
 
-    // 视觉顺序 = 键盘导航顺序
+    // 视觉顺序 = 键盘导航顺序 = 数字角标顺序
     m_tiles = m_recentTiles + m_allTiles + m_appTiles;
+    applyShortcutNumbers();
 
     m_lastColumns = -1;   // 磁贴全换了，强制重新摆一次
     reflow();
@@ -776,6 +822,16 @@ void HomePage::updateFooter()
         parts.append(QStringLiteral("%1 个失败").arg(failed));
 
     m_footer->setText(QStringLiteral("已加载 ") + parts.join(QStringLiteral(" · ")));
+
+    // 提示跟着角标一起显隐：只有一个结果时回车就是它，提数字键反而是噪音；
+    // 文案随「搜索框有没有字」变 —— 有字时裸数字是输入，必须按住 Ctrl 才是直选。
+    const bool numbered = m_tiles.size() >= 2;
+    m_shortcutHint->setVisible(numbered);
+    if (numbered) {
+        m_shortcutHint->setText(m_search->text().isEmpty()
+                                    ? QStringLiteral("数字键 1-9 直接打开")
+                                    : QStringLiteral("Ctrl+1-9 直接打开"));
+    }
 }
 
 int HomePage::columnsFor(int viewportWidth) const
@@ -840,6 +896,38 @@ int HomePage::columnCount() const
     return columnsFor(m_scroll->viewport()->width());
 }
 
+void HomePage::applyShortcutNumbers()
+{
+    // 只有一个结果时不标号：此时回车打开的就是它，标个「1」只会让人以为还得按一下。
+    // 第 10 项起不标号（键盘没有 10 这个直选位），它们仍能用方向键 + 回车打开。
+    const bool numbered = m_tiles.size() >= 2;
+    for (int i = 0; i < m_tiles.size(); ++i)
+        m_tiles.at(i)->setShortcutNumber(numbered && i < kMaxShortcut ? i + 1 : 0);
+}
+
+bool HomePage::activateNumber(int number)
+{
+    if (number < 1 || number > kMaxShortcut || number > m_tiles.size())
+        return false;
+
+    LauncherTile *tile = m_tiles.at(number - 1);
+    // 先把高亮落到这个磁贴上再打开：滚动容器会顺手把它滚进可视区，
+    // 万一打开失败（比如应用被删了）用户也能看见刚才选的是哪一个。
+    setCurrentIndex(number - 1);
+    activateTile(tile);
+    return true;
+}
+
+void HomePage::activateTile(LauncherTile *tile)
+{
+    if (!tile)
+        return;
+    if (tile->kind() == LauncherItem::Kind::App)
+        emit appActivated(tile->id());
+    else
+        emit toolActivated(tile->id());
+}
+
 void HomePage::setCurrentIndex(int index)
 {
     if (m_tiles.isEmpty())
@@ -877,11 +965,7 @@ bool HomePage::activateCurrent()
         return false;
 
     const int index = m_currentIndex >= 0 ? m_currentIndex : 0;
-    LauncherTile *tile = m_tiles.at(index);
-    if (tile->kind() == LauncherItem::Kind::App)
-        emit appActivated(tile->id());
-    else
-        emit toolActivated(tile->id());
+    activateTile(m_tiles.at(index));
     return true;
 }
 
@@ -922,6 +1006,24 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
                     setPendingImage(image);
                     return true;
                 }
+            }
+
+            // 数字键直选（1~9）。为什么分成两条通道：
+            //   * 搜索框为空（热键刚呼出的状态）时，裸数字直接打开第 N 项 —— 这是
+            //     最顺手的动作，不该逼用户先按修饰键；
+            //   * 搜索框有字时，裸数字必须留给输入（否则 base64 / 360 / 7z 这类
+            //     关键词一打就断），直选改用 Ctrl+数字。
+            // 比较修饰键前清掉 KeypadModifier：小键盘数字也带这个标志，不清掉的话
+            // 按小键盘 1 匹配不上「无修饰键」，会静默失效。
+            // 序号没有对应磁贴时一律放行，让数字照常进搜索框 —— 宁可多打一个字，
+            // 也不要出现「按了完全没反应」的死键。
+            const int key = ke->key();
+            if (key >= Qt::Key_1 && key <= Qt::Key_9) {
+                const Qt::KeyboardModifiers mods = ke->modifiers() & ~Qt::KeypadModifier;
+                const bool withCtrl = (mods == Qt::ControlModifier);
+                const bool bare = (mods == Qt::NoModifier) && m_search->text().isEmpty();
+                if ((withCtrl || bare) && activateNumber(key - Qt::Key_0))
+                    return true;
             }
 
             switch (ke->key()) {
