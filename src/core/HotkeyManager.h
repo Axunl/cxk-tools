@@ -5,7 +5,8 @@
 //
 // 平台实现：
 //   * Windows —— RegisterHotKey 注册到 message-only 窗口（HWND_MESSAGE），
-//                在 WndProc 里收 WM_HOTKEY；
+//                在 WndProc 里收 WM_HOTKEY；另外挂一个 WH_KEYBOARD_LL 兜底，
+//                防止按键在进入系统热键匹配前被别的进程的键盘钩子吃掉；
 //   * Linux   —— X11 XGrabKey 抓根窗口，按键事件从 Qt 的 native event filter
 //                里取 xcb 事件；
 //   * macOS   —— 尚未实现（需要 Carbon RegisterEventHotKey 或辅助功能 API），
@@ -58,6 +59,19 @@ private:
     /// Windows 专用的消息接收窗口（HWND_MESSAGE，不可见）；其他平台空实现。
     bool ensureSinkWindow();
     void destroySinkWindow();
+
+    /// Windows 兜底通道：低级键盘钩子。
+    ///
+    /// RegisterHotKey 注册成功后，按键仍可能在系统热键匹配之前被别的进程（远程控制 /
+    /// 键盘增强 / 输入法）的 WH_KEYBOARD_LL 钩子截走，表现就是「注册成功、按了没反应」。
+    /// 这个钩子只负责「看到键」并补一次唤起，见 .cpp 里的详细说明。
+    ///
+    /// @param virtualKey  Win32 虚拟键码（VK_*）
+    /// @param winModifiers RegisterHotKey 的 MOD_* 位组合
+    ///
+    /// 非 Windows 平台是空实现（X11 的 XGrabKey 没有这个问题，macOS 还没实现热键）。
+    void installKeyboardHook(unsigned int virtualKey, unsigned int winModifiers);
+    void uninstallKeyboardHook();
 
     void *m_sink = nullptr;          ///< Windows: HWND；其他平台不使用
     bool m_registered = false;

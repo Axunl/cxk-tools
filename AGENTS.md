@@ -744,6 +744,21 @@ add_subdirectory(plugins/mytool)
   `VK_SPACE` 时介入，自己用 `GetKeyState` 读修饰键，并吞掉消息避免真的弹菜单。
   两条入口共用 `acceptSequence()`，别在 `keyPressEvent` 里再复制一份逻辑。
 - Windows：`RegisterHotKey` 注册到 message-only 窗口（`HWND_MESSAGE`），`WndProc` 收 `WM_HOTKEY`。
+- **「注册成功」不等于「按键到得了」**：`RegisterHotKey` 只表示系统占位成功，按键还要先过一遍
+  `WH_KEYBOARD_LL` 钩子链才进入热键匹配。链上任何一环（远程控制 ToDesk、剪贴板/截图工具、
+  键盘增强、部分输入法、外设驱动）吃掉这次按键，就永远等不到 `WM_HOTKEY`，日志里却还是
+  「已注册」。典型指纹：用 `SendInput` 合成的按键能正常派发 `WM_HOTKEY`，物理按键没反应 ——
+  因为这些钩子通常只对真实输入生效、放过 `LLKHF_INJECTED` 事件。
+- 所以 Windows 侧多挂一个 `WH_KEYBOARD_LL` 兜底（`installKeyboardHook()`）：看到目标组合键就
+  延迟 `kHookFallbackDelayMs`（150ms）再判断，这段时间内 `WM_HOTKEY` 到了就什么都不做，
+  避免一次按键唤起两次。设计约束：
+  - 只在 `RegisterHotKey` **成功**之后才挂：组合键真被别的程序占走时仍如实报「已被占用」，
+    不去抢别人的热键。
+  - 钩子回调运行在 GUI 线程，但挡在整机输入通路上，**只做比对 + 时间戳 + 起定时器**，
+    绝不做重活；并且永远 `CallNextHookEx` 放行，吞键会让所有程序（含输入法）都收不到。
+  - 不按 `LLKHF_INJECTED` 过滤：远程桌面/自动化注入的按键也该能唤起窗口。
+  - `kHookRepeatGuardMs`（400ms）抑制长按自动重复；换绑时 `unregister()` 会把钩子匹配条件清零。
+  - 兜底命中会写一行「WM_HOTKEY 未到达，由键盘钩子兜底唤起」，下次再报热键失灵先搜这行。
 - Linux：X11 `XGrabKey` 抓根窗口，要连带 `CapsLock`/`NumLock` 的 4 种 lock mask；
   占用检测靠 `XSetErrorHandler` + `XSync` 捕 `BadAccess`；Wayland 拿不到 `Display*`，直接返回可读失败文案。
   `Display*` 从 `qGuiApp->nativeInterface<QNativeInterface::QX11Application>()` 取
@@ -1200,6 +1215,7 @@ add_subdirectory(plugins/mytool)
 | 共享开两个窗口就变成两个端口、两份列表 | 宿主 `createPanel()` 不缓存面板，把服务挂在面板上就等于每个面板一个服务 | `ShareStore` / `ShareServer` 用进程级单例且不析构，见第五部分共享一节 |
 | 设置页里按 `Alt+Space` 毫无反应，`hotkey` 还是旧值 | Windows 把它当窗口系统菜单：Qt 拿到 `WM_SYSKEYDOWN(VK_SPACE)` 直接转 `SC_KEYMENU`，**不生成 `QKeyEvent`**，`keyPressEvent` 永远等不到；菜单弹出还可能抢走焦点让 `focusOutEvent` 恢复旧值 | 录制不能只靠 `keyPressEvent`：`HotkeyButton::nativeEvent` 里补原生消息通道（`GetKeyState` 读修饰键 + 吞掉消息），见第五部分「全局热键」 |
 | 设了某个热键后，别的程序里同名快捷键全失效（如 `Ctrl+A` 不能全选） | `RegisterHotKey` 是系统级独占，单修饰键 + 字母这种「常见编辑快捷键」被抢走就全局生效 | 这不是 bug 是全局热键的固有语义：默认值只给 `Ctrl+Alt+Space`，交付时提醒用户别拿单修饰键 + 字母当热键 |
+| 日志写「已注册 Alt+Space」，物理按键却毫无反应；同一台机器上 `SendInput` 合成同一个组合却能唤起 | 按键要先过 `WH_KEYBOARD_LL` 钩子链才进热键匹配，链上某个常驻程序（实测机器上同时跑着 ToDesk / Snipaste / Ditto）把真实按键吃掉，而这类钩子普遍放过 `LLKHF_INJECTED` 事件，所以注入能过、物理按不过 —— 于是「注册成功」和「按键到得了」被解耦了 | Windows 侧再挂一个自己的 `WH_KEYBOARD_LL` 兜底（`installKeyboardHook()`），命中后延迟 150ms，若这期间 `WM_HOTKEY` 到了就不管（防重复唤起）。排查时先搜日志「由键盘钩子兜底唤起」：出现了说明系统热键链路被别家拦了，没出现才是我们自己的问题 |
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 | `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |

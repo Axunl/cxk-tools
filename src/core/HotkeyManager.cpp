@@ -6,6 +6,10 @@
 
 #include <windows.h>
 
+#include <QDateTime>
+#include <QPointer>
+#include <QTimer>
+
 namespace {
 
 /// RegisterHotKey 的 id，进程内唯一即可。
@@ -13,6 +17,95 @@ constexpr int kHotkeyId = 0xB001;
 
 /// message-only 窗口的窗口类名，重复创建时靠它复用已注册的类。
 const wchar_t *kSinkClassName = L"CXKToolsHotkeySink";
+
+// ---------------------------------------------------------------------------
+// 兜底通道的状态（低级键盘钩子）
+//
+// 为什么需要它：RegisterHotKey 成功只代表「系统答应了」，不代表按键一定会变成
+// WM_HOTKEY。按键要经过 WH_KEYBOARD_LL 钩子链才进入热键匹配，链上任何一环
+// （远程控制、键盘增强、部分输入法、外设驱动）把这一次按键吃掉，我们就永远等
+// 不到 WM_HOTKEY——日志里还是漂漂亮亮的「已注册」，用户按下去毫无反应。
+//
+// 实测（本机装了 ToDesk / Snipaste / Ditto 这类会挂键盘钩子的常驻程序）：
+// 用 SendInput 合成的 Alt+Space 能正常派发 WM_HOTKEY，物理按键却常常没反应，
+// 正是「钩子只截真实输入、放过注入事件」的典型表现。
+//
+// 所以再加一层：自己挂一个 WH_KEYBOARD_LL，看到目标组合键就补一次唤起。
+// 为了不重复唤起，钩子命中后延迟 kHookFallbackDelayMs 再判断——如果这段
+// 时间里 WM_HOTKEY 已经到了，说明系统热键本来就好使，这次就不管。
+//
+// 钩子**永远放行**按键（CallNextHookEx）：吞掉按键会让所有程序都收不到，
+// 包括输入法，代价远大于收益。
+// ---------------------------------------------------------------------------
+
+/// 钩子命中后等系统热键的宽限期。取 150ms：正常情况 WM_HOTKEY 在同一轮事件循环
+/// 里就到（实测 < 5ms），这个值只是给卡顿留余量，同时又短到用户察觉不到。
+constexpr int kHookFallbackDelayMs = 150;
+
+/// 同一个按键的自动重复抑制窗口。按住不放时钩子会收到连发的 KEYDOWN，
+/// 但一个「按下」只该唤起一次（RegisterHotKey 侧靠 MOD_NOREPEAT 达到同样效果）。
+constexpr qint64 kHookRepeatGuardMs = 400;
+
+HHOOK g_keyboardHook = nullptr;
+QPointer<HotkeyManager> g_hookOwner;   ///< 回调要转投到哪个对象（钩子回调在 GUI 线程）
+unsigned int g_hookVirtualKey = 0;     ///< 要匹配的虚拟键码，0 表示不匹配任何键
+unsigned int g_hookModifiers = 0;      ///< 要匹配的 MOD_* 位组合
+qint64 g_lastWmHotkeyMs = 0;           ///< 最近一次收到 WM_HOTKEY 的时刻
+qint64 g_lastHookFireMs = 0;           ///< 最近一次钩子命中的时刻（抑制自动重复）
+
+/// 判断当前是否正好按着 expected 这组修饰键。
+///
+/// 读实时键状态（GetAsyncKeyState）而不是钩子事件里的标志位：KBDLLHOOKSTRUCT
+/// 只带被按下那一个键的信息，修饰键得自己查。Alt+Space 走到这里时 Alt 是按住的，
+/// 所以 VK_MENU 的高位必然是 1。
+bool modifiersMatch(unsigned int expected)
+{
+    const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool win = ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) != 0;
+
+    unsigned int actual = 0;
+    if (ctrl)  actual |= MOD_CONTROL;
+    if (alt)   actual |= MOD_ALT;
+    if (shift) actual |= MOD_SHIFT;
+    if (win)   actual |= MOD_WIN;
+    return actual == expected;
+}
+
+/// 低级键盘钩子回调。
+///
+/// 运行在安装钩子的线程（也就是 GUI 线程）上，因此可以安全地碰 Qt 对象；
+/// 但它挡在系统输入通路上，**这里绝不能做重活**，否则整机输入都会卡。
+/// 所以只做「比对 + 记时间戳 + 起一个定时器」，唤起逻辑全在事件循环里做。
+///
+/// 不区分 LLKHF_INJECTED：远程桌面/自动化注入的按键同样应该能唤起窗口，
+/// 而且注入事件走的也是同一条输入路径，没有理由区别对待。
+LRESULT CALLBACK keyboardHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)
+        && g_hookVirtualKey != 0 && g_hookOwner) {
+        auto *info = reinterpret_cast<KBDLLHOOKSTRUCT *>(lParam);
+        if (static_cast<unsigned int>(info->vkCode) == g_hookVirtualKey
+            && modifiersMatch(g_hookModifiers)) {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - g_lastHookFireMs > kHookRepeatGuardMs) {
+                g_lastHookFireMs = now;
+                const QPointer<HotkeyManager> owner = g_hookOwner;
+                QTimer::singleShot(kHookFallbackDelayMs, owner.data(), [owner, now] {
+                    if (!owner)
+                        return;
+                    // 这段时间里系统热键已经派发过，说明 RegisterHotKey 好使，别重复唤起
+                    if (g_lastWmHotkeyMs >= now)
+                        return;
+                    qInfo() << "HotkeyManager: WM_HOTKEY 未到达，由键盘钩子兜底唤起";
+                    QMetaObject::invokeMethod(owner.data(), "onHotkey", Qt::QueuedConnection);
+                });
+            }
+        }
+    }
+    return CallNextHookEx(g_keyboardHook, code, wParam, lParam);
+}
 
 /// Qt::Key -> Win32 Virtual-Key。
 ///
@@ -69,6 +162,8 @@ LRESULT CALLBACK sinkProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     Q_UNUSED(lParam)
 
     if (msg == WM_HOTKEY && wParam == kHotkeyId) {
+        // 记时刻供钩子兜底判断「系统热键其实好使」，避免一次按键唤起两次
+        g_lastWmHotkeyMs = QDateTime::currentMSecsSinceEpoch();
         auto *self = reinterpret_cast<HotkeyManager *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (self)
             QMetaObject::invokeMethod(self, "onHotkey", Qt::QueuedConnection);
@@ -260,6 +355,47 @@ void HotkeyManager::unregister()
         m_registered = false;
     }
 #endif
+
+    // 热键没了，兜底钩子也必须停匹配，否则老的组合键还会把窗口唤出来
+    uninstallKeyboardHook();
+}
+
+void HotkeyManager::installKeyboardHook(unsigned int virtualKey, unsigned int winModifiers)
+{
+#ifdef Q_OS_WIN
+    // 先更新匹配条件：换绑时钩子已经在了，只需换要比对的键
+    g_hookVirtualKey = virtualKey;
+    g_hookModifiers = winModifiers;
+    g_hookOwner = this;
+
+    if (g_keyboardHook)
+        return;
+
+    // 参数 3 用本模块句柄 + 线程 id 0：低级键盘钩子装在当前线程，回调也回到这里
+    g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboardHookProc, GetModuleHandleW(nullptr), 0);
+    if (!g_keyboardHook) {
+        // 钩子只是兜底，装不上不影响 RegisterHotKey 这条主路，所以只记日志不算失败
+        qWarning() << "HotkeyManager: 键盘钩子兜底安装失败:" << GetLastError();
+        return;
+    }
+    qInfo() << "HotkeyManager: 键盘钩子兜底已就绪";
+#else
+    Q_UNUSED(virtualKey)
+    Q_UNUSED(winModifiers)
+#endif
+}
+
+void HotkeyManager::uninstallKeyboardHook()
+{
+#ifdef Q_OS_WIN
+    if (g_keyboardHook) {
+        UnhookWindowsHookEx(g_keyboardHook);
+        g_keyboardHook = nullptr;
+    }
+    g_hookVirtualKey = 0;
+    g_hookModifiers = 0;
+    g_hookOwner = nullptr;
+#endif
 }
 
 bool HotkeyManager::registerSequence(const QKeySequence &seq, QString *errorMessage)
@@ -318,6 +454,10 @@ bool HotkeyManager::registerSequence(const QKeySequence &seq, QString *errorMess
     m_registered = true;
     m_sequence = seq;
     qInfo() << "HotkeyManager: 已注册" << seq.toString(QKeySequence::NativeText);
+
+    // 注册成功不代表按键一定到得了：再挂一层键盘钩子兜底（只在注册成功时挂，
+    // 组合键真被别人占走时仍如实报「已被占用」，不去抢别人的热键）
+    installKeyboardHook(vk, mods);
     return true;
 
 #elif defined(Q_OS_LINUX)
