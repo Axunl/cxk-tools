@@ -84,15 +84,20 @@ echo [env] Windows SDK fallback in use: %SDKVER%
 
 pushd "%ROOT%"
 
+rem ---- onnxruntime (optional PP-OCR backend, same detection as build.bat) -----
+set "ONNX_ARGS="
+if not defined Onnxruntime_ROOT if exist "%ROOT%\build\_third_party\onnxruntime-win-x64\include\onnxruntime_cxx_api.h" set "Onnxruntime_ROOT=%ROOT%\build\_third_party\onnxruntime-win-x64"
+if defined Onnxruntime_ROOT if exist "%Onnxruntime_ROOT%\include\onnxruntime_cxx_api.h" set "ONNX_ARGS=-DOnnxruntime_ROOT=%Onnxruntime_ROOT%"
+
 rem ---- configure + build ------------------------------------------------------
 if not exist "build\CMakeCache.txt" (
     echo [step] configure
     if defined NINJA_CMD (
         "%CMAKE_CMD%" -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
             -DCMAKE_PREFIX_PATH=%QTDIR% -DCMAKE_MAKE_PROGRAM=%NINJA_CMD% ^
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl %ONNX_ARGS%
     ) else (
-        "%CMAKE_CMD%" -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%QTDIR%
+        "%CMAKE_CMD%" -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=%QTDIR% %ONNX_ARGS%
     )
     if errorlevel 1 goto fail
 )

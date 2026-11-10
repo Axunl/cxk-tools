@@ -1,5 +1,6 @@
 #include "ToolRegistry.h"
 
+#include "Pinyin.h"
 #include "Settings.h"
 
 #include <QDebug>
@@ -37,7 +38,8 @@ int matchScore(const ToolEntry &entry, const QString &q)
 /// "首字母缩写"匹配：把关键词与名称按空格切词，各取首字母拼成串，
 /// 查询是它的子串就算命中（"jf" -> "json format" -> "jf"）。
 ///
-/// 这是给中文/英文混合名称兜底的廉价方案，比拼音简单得多，也够用。
+/// 这是给英文混合名称兜底的廉价方案：只认「词的首字符」，中文词贡献的是那个字
+/// 本身（"二维码 生成" -> "二生"），拼音缩写由下面的 pinyinScore 负责。
 int initialsScore(const ToolEntry &entry, const QString &q)
 {
     QString initials;
@@ -52,6 +54,52 @@ int initialsScore(const ToolEntry &entry, const QString &q)
             initials.append(word.at(0).toLower());
     }
     return initials.contains(q) ? 40 : 0;
+}
+
+/// 拼音/缩写匹配：ewm -> 二维码生成，weima -> 二维码，srf -> 正则表达式。
+///
+/// 与 LocalAppIndex 的分值梯度一致（相等 > 全拼相等 > 缩写前缀 > 全拼前缀 > 包含），
+/// 只是整体压低到 30~48：工具的字面匹配从 60 起，拼音命中不该盖过它。
+/// 名称与关键词都参与 —— 插件作者常把中文名写在 keywords 里、显示名用英文。
+int pinyinScore(const ToolEntry &entry, const QString &q)
+{
+    // 纯拉丁查询才需要转拼音；中文查询走字面匹配已经足够精确
+    for (const QChar ch : q) {
+        const ushort u = ch.unicode();
+        if (!((u >= u'0' && u <= u'9') || (u >= u'a' && u <= u'z')))
+            return 0;
+    }
+
+    QStringList texts = entry.info.keywords;
+    texts.append(entry.info.name);
+
+    // 一套「缩写 + 全拼」比一次；penalty 让次读音（多音字的另一种念法）低 2 分，
+    // 保证主读音命中排在前面
+    const auto ladder = [&q](const QString &initials, const QString &full, int penalty) {
+        int score = 0;
+        if (!initials.isEmpty() && initials == q)          score = std::max(score, 48 - penalty);
+        if (!full.isEmpty() && full == q)                  score = std::max(score, 46 - penalty);
+        if (!initials.isEmpty() && initials.startsWith(q)) score = std::max(score, 44 - penalty);
+        if (!full.isEmpty() && full.startsWith(q))         score = std::max(score, 42 - penalty);
+        if (!full.isEmpty() && full.contains(q))           score = std::max(score, 36 - penalty);
+        return score;
+    };
+
+    int best = 0;
+    for (const QString &text : texts) {
+        if (text.isEmpty())
+            continue;
+        const QString initials = pinyin::initials(text);
+        const QString full = pinyin::full(text);
+        best = std::max(best, ladder(initials, full, 0));
+
+        // 次读音只在含多音字时才有内容（重载/重装 的 chong、长图 的 zhang）
+        const QString altInitials = pinyin::initials(text, true);
+        const QString altFull = pinyin::full(text, true);
+        if (!altInitials.isEmpty() || !altFull.isEmpty())
+            best = std::max(best, ladder(altInitials, altFull, 2));
+    }
+    return best;
 }
 
 } // namespace
@@ -114,8 +162,11 @@ QStringList ToolRegistry::search(const QString &query, int limit) const
         }
 
         int s = matchScore(e, q);
-        if (q.size() > 1 && s == 0)
-            s = initialsScore(e, q);
+        if (q.size() > 1 && s == 0) {
+            s = initialsScore(e, q);      // 英文词首：jf -> JSON 格式化
+            if (s == 0)
+                s = pinyinScore(e, q);    // 中文拼音：ewm -> 二维码
+        }
         if (s > 0)
             hits.append({e.info.id, s + std::min(usage, 20)});   // 频次加成封顶 20，压不过一级匹配
     }

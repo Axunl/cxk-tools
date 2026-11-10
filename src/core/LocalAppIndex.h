@@ -38,6 +38,13 @@ public:
         QString path;      ///< 入口文件路径（.lnk / .app / .desktop）
         QString exec;      ///< 仅 Linux：去掉 %f/%U 等字段码后的启动命令
         QString iconName;  ///< 仅 Linux：desktop 文件里的 Icon= 值（主题名或绝对路径）
+
+        // 名称的拼音形态，扫描时算一次（见 Pinyin.h）。放这里是纯性能考虑：
+        // 搜索框每敲一个键都会把整个索引过一遍，逐个重算拼音串会白烧 CPU。
+        QString initials;     ///< 缩写串：微信 → wx，Visual Studio Code → vsc
+        QString pinyin;       ///< 全拼串：微信 → weixin
+        QString altInitials;  ///< 多音字换次读音后的缩写串：网易云音乐 → wyyyy（空=与主读音相同）
+        QString altPinyin;    ///< 同上，全拼串：网易云音乐 → wangyiyunyinyue
     };
 
     explicit LocalAppIndex(QObject *parent = nullptr);
@@ -49,7 +56,8 @@ public:
     const QList<Entry> &entries() const { return m_entries; }
     const Entry *entryById(const QString &id) const;
 
-    /// 按名称匹配，返回按相关度排序的 id。空查询直接返回空（应用不铺满首页）。
+    /// 按名称匹配（字面 + 拼音：`wx` / `weixin` 都能找到微信），返回按相关度排序的 id。
+    /// 空查询直接返回空（应用不铺满首页）。
     QStringList search(const QString &query, int limit = 24) const;
 
     /// 按需取图标（系统图标查询较慢，取到后缓存）。

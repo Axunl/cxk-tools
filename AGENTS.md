@@ -156,7 +156,8 @@ cxk-tools/
 ├── cmake/
 │   ├── XToolsHelpers.cmake     xtools_api 接口库 + xtools_add_plugin() 插件工厂（含 install 规则）
 │   ├── DeployQt.cmake          Windows 构建后把 Qt 运行库部署到 bin/（让 IDE 里能直接跑）
-│   └── PruneQtRuntime.cmake    三平台共用的运行库裁剪脚本（cmake -P 调用，逐项删并打印字节数）
+│   ├── PruneQtRuntime.cmake    三平台共用的运行库裁剪脚本（cmake -P 调用，逐项删并打印字节数）
+│   └── FindOnnxruntime.cmake   手写 Find 模块：找 onnxruntime 头/库/dll，产出 onnxruntime::onnxruntime
 ├── .editorconfig               编码/行尾兜底（规则 5）
 ├── src/
 │   ├── CMakeLists.txt          主程序目标；APP_SOURCES 是显式文件列表
@@ -170,6 +171,8 @@ cxk-tools/
 │   │   ├── ToolRegistry.*      工具条目容器 + 搜索评分
 │   │   ├── QueryIntent.h       纯逻辑：识别「JSON / 图片 / 英文」三种搜索意图（可单测）
 │   │   ├── LocalAppIndex.*     本机应用索引（开始菜单 / .app / .desktop）+ 启动
+│   │   ├── Pinyin.*            汉字→拼音/缩写（纯逻辑，可单测）；拼音表见下一条
+│   │   ├── PinyinData.*        生成的读音表（U+4E00–U+9FFF，勿手改，见 gen-pinyin-data.py）
 │   │   ├── PluginManager.*     扫描 plugins/ 并用 QPluginLoader 加载
 │   │   ├── HotkeyManager.*     全局热键（Win32 / X11；macOS 待补）
 │   │   ├── SingleInstance.*    QLocalServer 单实例与二次激活
@@ -197,7 +200,8 @@ cxk-tools/
 │   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
 │   ├── translate/{TranslateTool.*, TranslatePanel.*, TranslateLogic.h}
 │   ├── colorpicker/{ColorPickerTool.*, ColorPickerPanel.*, ColorText.h, ColorProbe.h}
-│   ├── ocr/{OcrTool.*, OcrPanel.*, OcrEngine.*, OcrCapture.*, OcrText.h}
+│   ├── ocr/{OcrTool.*, OcrPanel.*, OcrEngine.*, OcrOnnx.*, OcrCapture.*, OcrText.h, OcrPostprocess.h,
+│   │        models/（ch_PP-OCRv4 det/rec ONNX + ppocr_keys_v1.txt，随程序分发，勿手改）}
 │   ├── cron/{CronTool.*, CronPanel.*, CronExpr.h}
 │   ├── jwt/{JwtTool.*, JwtLogic.h}
 │   ├── md5/{Md5Tool.*, Md5Logic.h}
@@ -205,7 +209,8 @@ cxk-tools/
 │   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
 │   ├── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
-│   └── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
+│   ├── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
+│   └── memes/{MemeTool.*, MemePanel.*, MemeTile.*, MemeGrid.*, MemePreview.*, MemeCache.*, MemeSource.h}
 ├── assets/
 │   ├── app.ico                 Windows 图标（PNG 条目的多尺寸 ICO，被 src/app/app.rc.in 引用）
 │   ├── app.icns                macOS 图标（icp4~ic10，打包时拷进 .app/Contents/Resources）
@@ -213,7 +218,9 @@ cxk-tools/
 ├── installer/
 │   ├── windows/cxk-tools.iss   Inno Setup 6 脚本（AppId 固定，UTF-8 无 BOM）
 │   └── windows/lang/ChineseSimplified.isl   第三方简体中文向导翻译，原样入库
-├── scripts/{build.bat, build.sh, package.bat, package-macos.sh, gen-release-manifest.py}
+├── scripts/{build.bat, build.sh, package.bat, package-macos.sh, gen-release-manifest.py,
+│            gen-pinyin-data.py（生成 src/core/PinyinData.cpp，需要 pypinyin）,
+│            fetch-onnxruntime.py（从 NuGet 下载解包 onnxruntime 到 build/_third_party）}
 ├── .github/workflows/{ci.yml, release.yml}
 └── docs/{PLUGIN.md, main-preview.png}
 ```
@@ -661,9 +668,13 @@ add_subdirectory(plugins/mytool)
 | 关键词包含 | 65 |
 | id 包含 | 60 |
 | 首字母缩写命中（长度 >1 的查询才启用） | 40 |
+| 拼音/缩写（`ewm` → 二维码，`weima` → 二维码） | 36~48 |
 | 描述包含 | 30 |
 
 - 命中后再加 `min(usage, 20)` 频次加成，**封顶 20，压不过一级匹配**。
+- 拼音梯度（`ToolRegistry.cpp` 的 `pinyinScore`，只对纯拉丁查询生效，字面没命中才试）：
+  缩写相等 48 / 全拼相等 46 / 缩写前缀 44 / 全拼前缀 42 / 全拼包含 36；次读音整体 −2。
+  名称与 `keywords` 都参与（插件常把中文名写在 keywords 里）。
 - 空查询按 `1000 - min(usage, 500)` 排序（= 常用工具靠前），上限防止某个工具永远霸榜。
 - 同分按名称 `localeAwareCompare` 排序，保证结果稳定（否则会随插件加载顺序抖动）。
 
@@ -699,12 +710,25 @@ add_subdirectory(plugins/mytool)
 | 名称前缀 | 90 |
 | 逐词前缀（`studio` → Visual Studio Code） | 80 |
 | 名称包含 | 70 |
+| 拼音缩写完全相等（`wx` → 微信） | 68 |
+| 拼音全拼完全相等（`weixin`） | 66 |
 | 首字母缩写（`vsc`） | 65 |
+| 拼音缩写前缀（`wxd` → 微信读书） | 63 |
+| 拼音全拼前缀（`weix`） | 61 |
 | 可执行文件名包含 | 50 |
+| 拼音全拼包含（`yinyue` → QQ音乐） | 45 |
 
 - 同样加 `min(usage, 20)`；**空查询直接返回空** —— 应用不铺满首页，只出现在搜索结果
   与「最近使用」里，否则上百个开始菜单项会把网格淹掉。
-- 名称用 `toCaseFolded()` 比较，中文原样参与，不做拼音（与工具搜索一致）。
+- 名称用 `toCaseFolded()` 比较，中文原样参与；字面没命中时才比拼音（`core/Pinyin.cpp`）：
+  拼音分值整体压在字面匹配之下、可执行文件名之上，**多音字**的次读音再 −2 分。
+- 拼音串在 `addEntry()` 时算好存进 `Entry`（`initials` / `pinyin` / `altInitials` / `altPinyin`），
+  **不要在 `search()` 里现算** —— 每敲一个键都要扫全表，现算会明显拖慢输入。
+- 拼音是「按字」取音，不认词组：多音字只有主读音 + 一个次读音（`音乐` 的 `乐` 有 `le`/`yue`，
+  但两个字都多音时只能换一个）。CJK 扩展区（U+3400 起）与生僻字不在表内，只按字面命中。
+- 拼音表 `src/core/PinyinData.cpp` 是**生成产物**（`scripts/gen-pinyin-data.py`，数据源 pypinyin），
+  约 100 KB、覆盖 U+4E00–U+9FFF 每个码位。要改读音规则就改脚本重跑，别手改表体；
+  首字母/全拼的切词规则在 `Pinyin.cpp`，那边才是手写逻辑。
 - 索引在启动时扫一次（`AppController::start`），运行期不热更新。
 
 ## 配置（`Settings`，INI 明文）
@@ -990,16 +1014,33 @@ add_subdirectory(plugins/mytool)
 
 ## OCR 文字识别（`plugins/ocr`，插件内部）
 
-- 四层：`OcrText.h`（纯逻辑，可临时断言）、`OcrEngine.*`（唯一碰平台差异的地方）、
-  `OcrCapture.*`（纯 Qt 全屏框选浮层）、`OcrPanel.*`（界面）。分层理由同 memmon/colorpicker：
-  纯逻辑抽成 header 才能在临时工程里直接 include 验证。
-- **两端输出统一成「带坐标的词」**：Windows 后端输出 `W|x|y|w|h|text`，tesseract 输出 TSV
-  （取 `level==5` 的 word 行），都由 `OcrText.h` 归一化成 `Word{x,y,width,height,text}`，
-  排版（归行、拼接、分列）只有一份实现。
-- Windows 用系统自带 PowerShell 调 `Windows.Media.Ocr`（WinRT），**不写 C++/WinRT**：
+- 分层：`OcrText.h` / `OcrPostprocess.h`（纯逻辑，可临时断言）、`OcrOnnx.*`（PP-OCR 推理，
+  PIMPL 藏 Ort:: 类型）、`OcrEngine.*`（唯一碰平台差异的地方）、`OcrCapture.*`（纯 Qt 全屏框选
+  浮层）、`OcrPanel.*`（界面）。分层理由同 memmon/colorpicker：纯逻辑抽成 header 才能在临时
+  工程里直接 include 验证。
+- **首选后端是 PP-OCRv4（ONNX Runtime）**，三端统一、离线、识别率最高；模型缺失/加载失败/推理
+  失败时 `recognize()` 用 `error == "__FALLBACK__"` 占位回退到平台原生引擎。三个后端最终都
+  归一化成 `ocrtext::Word`（带坐标的词），排版（归行、拼接、分列）只有一份实现。
+- PP-OCR 管线：QImage 读图 → det（DBNet 出概率图）→ `OcrPostprocess::detBoxes` 阈值/8 邻域连通域/
+  外接矩形/unclip 膨胀 → 逐框 crop → rec（SVTR_LCNet 出 CTC）→ `ctcDecode` → 组 Word。det 与 rec
+  共用一个 `OcrOnnxEngine`，Session 只建一次（复用，避免重复加载模型）。
+- `OcrOnnx.cpp` 是**唯一 include onnxruntime 头文件**的地方（PIMPL 把 `Ort::Session` 藏进 Impl），
+  `OcrOnnx.h` 只暴露 Qt 值类型；未定义 `XTOOLS_HAVE_ONNX` 时整个文件退化成「`isAvailable()` 恒
+  false 的桩」，三端都能编译。onnxruntime 是可选依赖：`-DOnnxruntime_ROOT=<解包目录>` 启用
+  （FindOnnxruntime.cmake 找不到不报错），发布构建必须显式给（否则打出的包没有 PP-OCR）。
+  运行库与模型都要随程序分发：onnxruntime.dll + onnxruntime_providers_shared.dll 拷到 `bin/`，
+  模型（det 4.7MB + rec 10.8MB + keys 26KB）在 `plugins/ocr/models/` 由 `cmake --install` 落位。
+- **det 后处理三要素（踩坑结论，别改回）**：① det 输入必须 pad 到 32 的倍数，否则 Add 节点广播
+  失败「25 by 26」；② DB-Net 概率图是「收缩后的文字核心」，必须按 `offset = area × ratio / perimeter`
+  做 unclip 膨胀（否则框只有真实高度 40%，rec 切掉上下边缘、认错字）；③ 概率图文字区域与 pad 前
+  缩放图 1:1 对齐，**坐标不做缩放**（按 origW/mapW 缩放会整体缩小、切字），只 clamp 到缩放图尺寸。
+  连通域必须用 8 邻域（scipy ndimage.label 默认），4 邻域会把「体/衡」这类对角笔画切成多个框。
+- **rec 字典映射**：输出 6625 类，只取前 6624（keys 6622 + blank 索引 0 + 空格索引 6623 + 1 对齐
+  padding 忽略）。`ctcDecode` 顺序是「逐帧 argmax → 先去连续重复 → 再去 blank → keys 映射」，
+  不能反过来（否则 `a - a` 会错成 `aa` 而非 `a`）。
+- Windows 兜底用系统自带 PowerShell 调 `Windows.Media.Ocr`（WinRT），**不写 C++/WinRT**：
   那样要 windowsapp.lib / winmd 投影头 / 异步初始化，会把三端构建拖进平台依赖。
-  `OcrEngine.cpp` 的平台分支仍是 Win / macOS / Linux / 兜底四段齐全，macOS 与 Linux 走外部
-  `tesseract`（先试 `eng+chi_sim`，失败降级默认语言），缺引擎返回可读原因。
+  macOS 与 Linux 兜底走外部 `tesseract`（先试 `eng+chi_sim`，失败降级默认语言），缺引擎返回可读原因。
   **macOS / Linux 没有实机验证**，不要往这两段塞未经验证的 Vision / 原生 OCR 代码。
 - 嵌入的 PowerShell 脚本**必须纯 ASCII（含注释）**：PS 5.1 按本地代码页（GBK）读无 BOM 的
   `.ps1`，实测中文注释会让后面的 WinRT 类型解析成 null（「不能对 Null 值表达式调用方法」）。
@@ -1141,6 +1182,35 @@ add_subdirectory(plugins/mytool)
   的话扫描器可能读不出来。识别页投放区宽度由 `setMaximumSize(240, 320)` 定住（宽度撑左栏、
   高度留一点弹性），缩略图在 `updateThumbnail()` 里按投放区现算，**不放大**（小图放大只会掩盖它糊）。
 
+## 表情包（`plugins/memes`，插件内部）
+
+- 分层：`MemeSource.h`（纯逻辑 header：两个数据源的 URL 构造与 HTML / JSON 解析、URL 归一化、
+  SHA-256 缓存键、图片格式魔数嗅探 —— 不依赖 QWidget，可单独 include 做断言）、`MemeCache.*`（磁盘缓存）、
+  `MemeTile.*` / `MemeGrid.*` / `MemePreview.*`（瓦片、网格、面板内浮层）、`MemePanel.*`（总装 + 网络）。
+- **两个数据源都要带对头**：发表情（`fabiaoqing.com`）的图床校验 `Referer`，不带就整片 403；
+  360 图片搜索的 JSON 接口不校验。降级链固定为 发表情 → 360，两家都失败时状态行把两个原因都写出来。
+- 主源失败后要**冷却**（`kFabCooldownMs`，5 分钟）：实测发表情会一次性挂起十几秒到半分钟，
+  不冷却的话每次搜索都先等满 8 秒超时才出结果。只有「超时 / 403 / 结构解析失败」才冷却，
+  解析出 0 条（站点通、只是没这个词）不冷却，否则一个冷门关键词会把主源停用 5 分钟。
+  冷却状态是面板成员变量（`QElapsedTimer`），不能做成静态/全局——同一工具可能同时有两个面板。
+- 发表情的「搜不到」和「页面结构变了」必须分开：有 `searchbqppdiv` → 正常结果；只有 `bqppdiv`
+  → 是「无结果时的推荐流」，当 0 条；两个都没有 → 结构异常，报解析失败。混在一起会让改版看起来像「没结果」。
+  解析按 `searchbqppdiv` 的**位置切块**再逐块取字段，不要写嵌套 div 的正则（发表情的 DOM 嵌套很深）。
+- 复制走「文件通道」：剪贴板里同时放 `setImageData()`（首帧）、`setUrls()`（本地路径）与动图字节
+  （Windows 用 `application/x-qt-windows-mime;value="GIF"`，Linux 用 `image/gif`，macOS 只放前两项）。
+  **必须有磁盘缓存**：`setUrls` 存的是路径，图片只活在内存里的话粘贴时目标程序读不到任何东西。
+  `outbox/` 是给剪贴板用的稳定副本，**不参与容量清理**——剪贴板里的路径可能几分钟后才被粘贴。
+  组装逻辑抽成了自由函数 `buildClipboardMime()`，测试直接断言它而不是读系统剪贴板（见踩坑表）。
+- 动图播放：`QMovie` 用 `CacheNone` + `setScaledSize()`，`frameChanged → update()` 重绘；
+  只播视口内的（按视口中心距离排序、上限 16 个），滚出视口只停播不清图，点开大图时网格全停。
+  停播要 `disconnect(this)` → `stop()` 后**同步 delete**，异步删会留着定时器继续跑。
+- 瓦片是自绘的、**没有 `Q_OBJECT`**（用 `std::function` 回调，测试靠 `dynamic_cast` 识别）：
+  152×184 固定尺寸，常态边框用 `Border` 而不是 `BorderSubtle`（白底表情包在浅色主题下会糊成一片）。
+- 面板不缓存（宿主约定），所以每次进来都要重建缓存对象与播放状态；同时存在内嵌与独立窗口两份时
+  两边的关键词、播放、下载队列必须完全独立，不能有任何静态 / 全局状态。
+- 主题色只能走 `xtools::theme::applyStyle()` / `color()`：`color()` 内部是 `QColor(QString)`，
+  解析不了 `rgba(255,255,255,235)` 这种 CSS 函数式写法（拿到无效色，`fillRect` 等于什么都没画）。
+
 ## 日志
 
 - 位置：`QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log`（不可漫游目录，避免企业漫游配置同步日志）。
@@ -1178,6 +1248,11 @@ add_subdirectory(plugins/mytool)
 | IDE（CLion）里点运行没反应、编辑器一片红 | CMake 工程没加载成功（没有可用 run configuration），常见于没配 Qt 路径或工具链选了 MinGW | 用 `CMakePresets.json` 的 `debug` 配置、Toolchain 选 Visual Studio，再 `Tools → CMake → Reset Cache and Reload Project`；运行配置选 `cxk-tools` 目标，**不要用单文件「Run 'main.cpp'」** |
 | 编辑器顶部提示「此文件不属于任何项目目标」且侧栏文件全灰 | 工程在仓库还没有 `CMakeLists.txt` 时被打开过，CLion 把「普通文件夹」的判断持久化在 `%LOCALAPPDATA%\JetBrains\CLion*\projects\<工程名>.*\project-model-cache\cache.data` 里，之后重启也不会重新识别 CMake | 关掉 IDE → 删 `.idea/` 与该 `projects\<工程名>.*` 缓存目录 → 重新打开。删 `.idea` 时**必须连 `modules.xml` + `.iml` 一起补回**（模块=内容根），否则 CLion 眼里的工程是 0 个文件（日志 `project model has 0 sources ... 0 total files in content`），同样不会配置 CMake |
 | 从终端 `start clion64.exe` 启动的 IDE 里 CMake 配置静默失败 | 子进程继承了启动终端的限制：受限账号下 `vcvarsall.bat` 内部调 `reg.exe` 探测 VS/SDK 被拦，日志表现为 `WindowsEnvironmentReader` 的 `InterruptedException` 与 `CMakeRunner - No output` → cmake 找不到编译器 | IDE 一律通过开始菜单/桌面图标正常启动；排查时看 `%LOCALAPPDATA%\JetBrains\CLion*\log\idea.log` 里的 `CMakeRunner` 与 `WindowsEnvironmentReader` |
+| 表情包的图在浏览器里能打开，插件里整片 403 / 裂图 | 发表情的图床校验 `Referer`（防盗链），Qt 默认不带 | 请求时把搜索页地址作为 `Referer` 发出；`403` 单独翻译成一句人话，别混进「网络错误」 |
+| 同一个插件在自己的临时测试工程里请求全被挡，套在宿主里正常 | `QCoreApplication::applicationVersion()` 为空，UA 拼成 `cxk-tools/`（带空尾巴）被服务端当垃圾请求 | 组 UA 时判空，退回不带斜杠的 `cxk-tools` |
+| 复制出来的动图粘到聊天窗口里不动，只贴出首帧 | 各程序认的动图剪贴板格式不同，`setImageData()` 只放得下一帧 | 三端互补：Windows 额外塞 GIF 原始字节（`CF_GIF`）、Linux 塞 `image/gif`，同时始终放首帧 + 文件地址，并在状态行说明「不动就另存为再按文件发」 |
+| 剪贴板相关断言在 CI / 无窗口会话里全挂，连 `setText` 都读不回来 | 这类会话下 `QClipboard` 拿不到系统剪贴板，不是代码错 | 把 MIME 组装拆成自由函数 `buildClipboardMime()` 直接断言，自动化里不要读系统剪贴板 |
+| 预览浮层的遮罩时而是全黑、时而完全不生效 | `QColor(QStringLiteral("rgba(...)"))` 解析失败得到无效色，`fillRect` 等于什么都没画 | 半透明遮罩 / 卡片统一走 `applyStyle(...)` + `WA_StyledBackground`，别在 `paintEvent` 里手拼 CSS 颜色函数 |
 | 在 IDE 里启动后立刻退出、无窗口 | 运行目录缺 Qt DLL（旧版 `bin/` 只有 exe 和 plugins） | 现在由 `DeployQt.cmake` 自动部署；若仍出现，检查 `bin/` 下是否有 `Qt6Core[d].dll` 与 `platforms/` |
 | 插件目录里没东西但也不报错 | 首次构建 `plugins/` 可能不存在 | `loadAll()` 会 `mkpath` 并在日志里告警；`xtools_add_plugin` 也有 POST_BUILD 建目录 |
 | IDE 里点运行后界面「已加载 0 个工具」、日志「发现 0 个候选文件」 | 运行配置只构建 `cxk-tools` 目标，插件是独立 MODULE 目标、不在依赖链上 → `bin/plugins` 为空 | 根 `CMakeLists.txt` 收尾处已 `add_dependencies(cxk-tools 全部插件)`（清单由 `xtools_add_plugin` 写全局属性 `XTOOLS_PLUGIN_TARGETS`），点运行即连带构建；仍出现则检查 `bin/plugins` 是否被清过，并**重启应用**（插件只在启动时扫描一次） |

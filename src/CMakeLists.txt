@@ -15,6 +15,10 @@ set(APP_SOURCES
     core/LocalAppIndex.h
     core/PluginManager.cpp
     core/PluginManager.h
+    core/Pinyin.cpp
+    core/Pinyin.h
+    core/PinyinData.cpp
+    core/PinyinData.h
     core/QueryIntent.h
     core/Settings.cpp
     core/Settings.h

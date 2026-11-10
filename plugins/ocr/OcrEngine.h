@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 // OCR 识别后端：插件里唯一碰「平台差异」的地方。
 //
-// 三端策略（保持离线、不引入新的编译依赖）：
-//   Windows  —— 调用系统自带的 Windows.Media.Ocr（WinRT）。中文识别语言随系统
-//               语言包提供，本机实测 zh-Hans-CN 可用，无需联网、无需打包模型。
-//   macOS    —— 调用外部 tesseract 命令行（TSV 输出），未安装则给出明确提示。
-//   Linux    —— 同 macOS。
+// 三端策略（保持离线）：
+//   首选    —— PP-OCR（ONNX Runtime，本地模型，三端统一，准确率最高）。模型与
+//              onnxruntime.dll 随程序分发，离线可用；见 OcrOnnx.h/.cpp。
+//   Windows —— 当 PP-OCR 不可用时回退到系统 Windows.Media.Ocr（WinRT）。
+//   macOS   —— 回退到外部 tesseract 命令行（TSV 输出），未安装则给出明确提示。
+//   Linux   —— 同 macOS。
 // 两端最终都归一化成 ocrtext::Word（带坐标的词），排版逻辑全部复用 OcrText.h。
 //
 // 刻意不写 C++/WinRT：那需要 windowsapp.lib、winmd 投影头与异步初始化，

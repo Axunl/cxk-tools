@@ -56,12 +56,25 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Windows 拉取 ONNX Runtime，让 OCR 的 PP-OCR 分支真正参与编译（而非只编
+      # 桩）。这一步失败不致命：FindOnnxruntime 找不到时 ocr 插件自动回落系统 OCR，
+      # 纯编译校验仍能过；但成功时能覆盖 OcrOnnx.cpp 的编译错误，价值更大。
+      - name: Fetch ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python scripts/fetch-onnxruntime.py || echo "[warn] onnxruntime fetch failed, OCR falls back to system OCR"
+
       - name: Configure
         shell: bash
         run: |
+          ONNX_ARGS=""
+          if [ -d "build/_third_party/onnxruntime-win-x64/include" ]; then
+            ONNX_ARGS="-DOnnxruntime_ROOT=$(pwd)/build/_third_party/onnxruntime-win-x64"
+          fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            $ONNX_ARGS
 
       - name: Build
         shell: bash

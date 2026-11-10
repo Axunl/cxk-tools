@@ -104,6 +104,13 @@ jobs:
           # package.bat 会优先用这个环境变量，避免再去猜路径
           "ISCC=$iscc" >> $env:GITHUB_ENV
 
+      # 发布包必须带 PP-OCR 能力：先拉 ONNX Runtime（失败则让本步骤失败，
+      # 不发一个「OCR 回落系统 OCR」的残缺版本），package.bat 会自动探测
+      # build/_third_party 并传给 -DONNXRUNTIME_ROOT。
+      - name: Fetch ONNX Runtime (required for PP-OCR)
+        shell: bash
+        run: python scripts/fetch-onnxruntime.py
+
       - name: Build and package
         shell: cmd
         env:

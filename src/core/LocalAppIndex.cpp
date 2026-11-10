@@ -1,5 +1,6 @@
 #include "LocalAppIndex.h"
 
+#include "Pinyin.h"
 #include "Settings.h"
 
 #include <QDebug>
@@ -50,7 +51,7 @@ bool looksLikeJunk(const QString &name)
 }
 
 /// 把匹配分数算在一处：得分越高越靠前，0 表示不命中。
-/// 规则与 ToolRegistry 的搜索保持同一套直觉（相等 > 前缀 > 词首 > 包含 > 首字母）。
+/// 规则与 ToolRegistry 的搜索保持同一套直觉（相等 > 前缀 > 词首 > 包含）。
 int matchScore(const QString &name, const QString &query)
 {
     const QString lower = name.toCaseFolded();
@@ -76,6 +77,55 @@ int matchScore(const QString &name, const QString &query)
         return 65;
 
     return 0;
+}
+
+/// 查询是否「纯 ASCII 字母数字」：这是走拼音/缩写比较的前提。
+/// 中文查询不必算拼音（字面匹配已经足够精确），也省掉每键一次的转换开销。
+bool isAsciiWord(const QString &query)
+{
+    if (query.isEmpty())
+        return false;
+    for (const QChar ch : query) {
+        const ushort u = ch.unicode();
+        if (!((u >= u'0' && u <= u'9') || (u >= u'a' && u <= u'z')))
+            return false;
+    }
+    return true;
+}
+
+/// 一套「缩写 + 全拼」的命中分，0 表示不命中。
+/// @param penalty 扣分：次读音整体比主读音低 2 分，主读音命中永远排在前面
+int ladderScore(const QString &initials, const QString &pinyin, const QString &query, int penalty)
+{
+    if (!initials.isEmpty() && initials == query)
+        return 68 - penalty;   // wx = 微信：整串对上，先于「微信读书」这类前缀命中
+    if (!pinyin.isEmpty() && pinyin == query)
+        return 66 - penalty;   // weixin = 微信
+    if (!initials.isEmpty() && initials.startsWith(query))
+        return 63 - penalty;   // wx → 微信读书
+    if (!pinyin.isEmpty() && pinyin.startsWith(query))
+        return 61 - penalty;   // weix → 微信
+    if (!pinyin.isEmpty() && pinyin.contains(query))
+        return 45 - penalty;   // yinyue → 网易云音乐（全拼中间命中，能搜到但排在最后）
+    return 0;
+}
+
+/// 拼音/缩写命中：wx → 微信，weixin → 微信，wxdsh → 微信读书。
+///
+/// 分值安排在「名称字面匹配」之后（100/90/80/70/65）、「可执行文件名」之前（50）：
+/// 名称里写着的字永远比读音更可信，但读懂了读音的命中比一个文件名相似更该靠前。
+///
+/// 主读音与次读音各比一次：yinyue 命中「网易云音乐」靠的就是次读音（乐→yue），
+/// 而 kuaile 仍然走主读音，两条路互不干扰。
+int aliasScore(const LocalAppIndex::Entry &entry, const QString &query)
+{
+    if (!isAsciiWord(query))
+        return 0;
+
+    int best = ladderScore(entry.initials, entry.pinyin, query, 0);
+    if (!entry.altInitials.isEmpty() || !entry.altPinyin.isEmpty())
+        best = std::max(best, ladderScore(entry.altInitials, entry.altPinyin, query, 2));
+    return best;
 }
 
 #if defined(Q_OS_LINUX)
@@ -244,6 +294,9 @@ QStringList LocalAppIndex::search(const QString &query, int limit) const
     QList<Hit> hits;
     for (const Entry &entry : m_entries) {
         int score = matchScore(entry.name, q);
+        // 字面没命中时才比拼音/缩写：名称里真有的字比读音可信，不能被拼音盖过去
+        if (score == 0)
+            score = aliasScore(entry, q);
         if (score == 0) {
             // 名称没命中时再试可执行文件名（Firefox 的 desktop 名可能是 "Firefox Web Browser"）
             const QString base = QFileInfo(entry.path).completeBaseName();
@@ -373,6 +426,17 @@ void LocalAppIndex::addEntry(const QString &name, const QString &path,
     entry.path = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     entry.exec = exec;
     entry.iconName = iconName;
+    // 拼音形态在这里算一次：搜索时每个按键都要扫全表，逐次转换会明显拖慢输入
+    entry.initials = pinyin::initials(trimmedName);
+    entry.pinyin = pinyin::full(trimmedName);
+    // 次读音只在名称里真的有「换一种念法会变」的字时才存：
+    // 与主读音完全相同时丢掉，避免给每个应用都白留两套字符串
+    const QString altInitials = pinyin::initials(trimmedName, true);
+    const QString altPinyin = pinyin::full(trimmedName, true);
+    if (altInitials != entry.initials || altPinyin != entry.pinyin) {
+        entry.altInitials = altInitials;
+        entry.altPinyin = altPinyin;
+    }
     m_entries.append(entry);
 }
 

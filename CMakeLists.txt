@@ -70,12 +70,27 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
+# 可选依赖开关：OCR 的本地 PP-OCR 模型（基于 ONNX Runtime）。
+#
+# 默认 ON，但「找不到 onnxruntime 不报错」：缺依赖时 ocr 插件退化为「回退系统
+# OCR / tesseract」的版本，不打断整体构建。要启用完整能力，配置时传：
+#   -DOnnxruntime_ROOT=<onnxruntime 解压目录>
+# （Find 模块也兼容旧的 -DONNXRUNTIME_ROOT 写法。）
+# 发布构建（scripts/package.bat 或 CI）必须显式传该参数，否则打出来的包没有
+# PP-OCR 能力（onnxruntime.dll 与模型都不会进包）。Find 模块在 cmake/FindOnnxruntime.cmake。
+# ---------------------------------------------------------------------------
+option(XTOOLS_ENABLE_ONNX "Build the OCR plugin with local PP-OCR (ONNX Runtime) support" ON)
+
+# ---------------------------------------------------------------------------
 # 统一输出布局（三平台一致）：
 #   build/bin/cxk-tools            主程序
 #   build/bin/plugins/<id>         插件动态库，宿主按「可执行文件同级/plugins」扫描
 # ---------------------------------------------------------------------------
 set(XTOOLS_BIN_DIR    "${CMAKE_BINARY_DIR}/bin")
 set(XTOOLS_PLUGIN_DIR "${XTOOLS_BIN_DIR}/plugins")
+
+# 让 find_package 能找到仓库自带的 Find*.cmake（目前是 FindOnnxruntime.cmake）
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(cmake/XToolsHelpers.cmake)
 
@@ -98,6 +113,7 @@ add_subdirectory(plugins/regex)
 add_subdirectory(plugins/share)
 add_subdirectory(plugins/websocket)
 add_subdirectory(plugins/qrcode)
+add_subdirectory(plugins/memes)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。

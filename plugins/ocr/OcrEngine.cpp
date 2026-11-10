@@ -4,11 +4,18 @@
 // 识别后端实现。平台分支固定四段：Windows / macOS / Linux / 其它兜底。
 // 本文件不 include 任何 windows.h / AppKit / X11 头 —— 平台差异全部体现为
 // 「调用哪个外部命令、解析哪种输出」，因此三端都能用同一套 Qt 代码编译。
+//
+// 三端统一的首选后端是 PP-OCR（ONNX Runtime，见 runOnnxOcr）；当 onnxruntime/
+// 模型缺失或识别失败时，自动回退到下面的平台原生后端（WinRT / tesseract）。
 // ---------------------------------------------------------------------------
+
+#include "OcrOnnx.h"
+#include "OcrPostprocess.h"
 
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
@@ -24,6 +31,112 @@ QString processStartError(const QString &exe)
 {
     return QStringLiteral("无法启动 OCR 引擎进程（%1）：请检查系统是否允许运行该程序")
         .arg(exe);
+}
+
+// ---------------------------------------------------------------------------
+// PP-OCR（ONNX Runtime）后端：三端统一的首选识别路径。
+//
+// 管线：QImage 读图 → det（DBNet 出概率图）→ 阈值/连通域/外接矩形（OcrPostprocess）
+//       → 逐框 crop → rec（SVTR_LCNet 出 CTC）→ ctcDecode → 组装 ocrtext::Word。
+// 每条 det 框对应一个 Word（text=整行文字），坐标取框的外接矩形，完全复用
+// OcrText.h 的 groupLines/joinLine 排版。
+//
+// 为什么这个后端是平台无关的：它只依赖 onnxruntime 的 C++ API（本身跨平台）
+// 与 Qt 的 QImage，不碰任何 WinRT / AppKit / Xlib，因此三端编译一致。
+// 引擎内部是同步阻塞调用，与 OcrEngine::recognize 的既定架构一致。
+// ---------------------------------------------------------------------------
+Result runOnnxOcr(const QString &imagePath)
+{
+    Result result;
+    result.backend = QStringLiteral("PP-OCR（本地模型）");
+
+    // onnxruntime 或模型缺失时直接给可读原因，由上层 recognize() 决定是否回退。
+    if (!OcrOnnxEngine::isAvailable()) {
+        result.error = QStringLiteral("__FALLBACK__");
+        return result;
+    }
+
+    QImage image(imagePath);
+    if (image.isNull()) {
+        result.error = QStringLiteral("__FALLBACK__");   // 读图失败也回退旧后端
+        return result;
+    }
+
+    OcrOnnxEngine engine;
+    QString loadError;
+    if (!engine.load(&loadError)) {
+        result.error = QStringLiteral("__FALLBACK__");
+        return result;
+    }
+
+    // det 输入长边限制 960，等比缩放（PaddleOCR det_limit_type=max）。缩放后
+    // det 框坐标在「缩放图」坐标系，最后再映射回原图（乘缩放比例）。
+    QImage scaledImage = image;
+    const int maxSide = qMax(image.width(), image.height());
+    if (maxSide > 960) {
+        const qreal r = qreal(960) / qreal(maxSide);
+        scaledImage = image.scaled(qMax(1, int(image.width() * r)),
+                                   qMax(1, int(image.height() * r)),
+                                   Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    const qreal coordScaleX = image.width() > 0
+        ? qreal(image.width()) / qreal(scaledImage.width()) : 1.0;
+    const qreal coordScaleY = image.height() > 0
+        ? qreal(image.height()) / qreal(scaledImage.height()) : 1.0;
+
+    // det 前向（内部 pad 到 32 倍数）
+    QString detError;
+    const DetMap map = engine.runDet(scaledImage, &detError);
+    if (!map.valid()) {
+        result.error = QStringLiteral("__FALLBACK__");
+        return result;
+    }
+
+    // det 后处理：概率图 → 文字框（坐标在缩放图坐标系）
+    const QVector<ocrpost::DetBox> boxes = ocrpost::detBoxes(
+        map.data, map.mapW, map.mapH, map.origW, map.origH);
+
+    if (boxes.isEmpty())
+        return result;   // 识别成功但图里没文字，属正常结果（error 空）
+
+    const QStringList keys = engine.keys();
+
+    // 逐框 crop → rec → CTC decode → 组装 Word
+    for (const ocrpost::DetBox &box : boxes) {
+        const int w = box.width();
+        const int h = box.height();
+        if (w <= 0 || h <= 0)
+            continue;
+        // crop 时夹紧到缩放图内，防止 det 框越界
+        const QRect rect(qBound(0, box.x0, scaledImage.width() - 1),
+                         qBound(0, box.y0, scaledImage.height() - 1),
+                         qMin(w, scaledImage.width() - qBound(0, box.x0, scaledImage.width() - 1)),
+                         qMin(h, scaledImage.height() - qBound(0, box.y0, scaledImage.height() - 1)));
+        const QImage crop = scaledImage.copy(rect);
+        if (crop.isNull())
+            continue;
+
+        QString recError;
+        const RecProb prob = engine.runRec(crop, &recError);
+        if (!prob.valid())
+            continue;   // 单框识别失败不整条失败，跳过该框继续
+
+        const QString text = ocrpost::ctcDecode(prob.data, prob.timesteps,
+                                                prob.vocabSize, keys);
+        if (text.trimmed().isEmpty())
+            continue;
+
+        ocrtext::Word word;
+        // 框坐标从缩放图映射回原图（原图坐标系，与 WinRT/tesseract 后端一致）
+        word.x = int(box.x0 * coordScaleX);
+        word.y = int(box.y0 * coordScaleY);
+        word.width = qMax(1, int(box.width() * coordScaleX));
+        word.height = qMax(1, int(box.height() * coordScaleY));
+        word.text = text;
+        result.words.append(word);
+    }
+
+    return result;
 }
 
 #if defined(Q_OS_WIN)
@@ -323,6 +436,11 @@ Result runTesseract(const QString &imagePath, int attempt)
 
 QString backendName()
 {
+#if defined(XTOOLS_HAVE_ONNX)
+    // 有 onnxruntime 且模型就绪时，首选 PP-OCR
+    if (OcrOnnxEngine::isAvailable())
+        return QStringLiteral("PP-OCR（本地模型，离线）");
+#endif
 #if defined(Q_OS_WIN)
     return QStringLiteral("Windows 系统 OCR（离线，开箱可用）");
 #elif defined(Q_OS_MACOS)
@@ -337,6 +455,18 @@ QString backendName()
 Result recognize(const QString &imagePath)
 {
     Result result;
+
+#if defined(XTOOLS_HAVE_ONNX)
+    // 首选 PP-OCR（本地模型）：准确率最高。runOnnxOcr 在「模型缺失/加载失败/
+    // 推理失败」时返回 error == "__FALLBACK__"，此时落回平台原生后端。
+    // 这样即使 onnxruntime.dll 没随包分发、或模型损坏，识别也不会整体失效。
+    if (OcrOnnxEngine::isAvailable()) {
+        result = runOnnxOcr(imagePath);
+        if (result.error != QLatin1String("__FALLBACK__"))
+            return result;   // 成功（含「图里没文字」），或真正的错误 → 直接返回
+        result.error.clear();   // 回退：清掉占位错误，走原生后端
+    }
+#endif
 
 #if defined(Q_OS_WIN)
     result = runWindowsOcr(imagePath);
