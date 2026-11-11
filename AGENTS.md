@@ -218,6 +218,8 @@ cxk-tools/
 │   ├── regex/{RegexTool.*, RegexPanel.*, RegexMatch.h}
 │   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
+│   ├── httpclient/{HttpClientTool.*, HttpPanel.*, HttpSpec.h, HttpStore.*}
+│   │                                 API 调试：参数/请求头/请求体/认证、响应、集合历史、cURL 互转
 │   ├── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
 │   ├── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
 │   ├── memes/{MemeTool.*, MemePanel.*, MemeTile.*, MemeGrid.*, MemePreview.*, MemeCache.*, MemeSource.h}
