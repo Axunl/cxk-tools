@@ -20,6 +20,7 @@ set(APP_SOURCES
     core/PinyinData.cpp
     core/PinyinData.h
     core/QueryIntent.h
+    core/QuickCalc.h
     core/Settings.cpp
     core/Settings.h
     core/SingleInstance.cpp

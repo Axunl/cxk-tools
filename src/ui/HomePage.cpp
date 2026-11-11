@@ -3,6 +3,7 @@
 #include "IconBadge.h"
 #include "LocalAppIndex.h"
 #include "PluginManager.h"
+#include "QuickCalc.h"
 #include "Settings.h"
 #include "ToolRegistry.h"
 
@@ -48,6 +49,14 @@ constexpr int kScrollbarReserve = 12;
 constexpr int kSearchHeight = 40;
 constexpr int kSearchClearSize = 20;
 constexpr int kSearchClearGap = 8;
+/// 搜索框内结果徽标（「= 96」）的尺寸规则。
+/// 宽度在 C++ 侧按像素算（不用 qss 的 padding）：徽标是 QLineEdit 的子控件，
+/// 几何完全手动控制，qss 的 padding 只会让文字被裁而不是把控件撑大。
+constexpr int kInlineResultMaxWidth = 200;   ///< 上限，2^1000 这类结果按像素省略
+constexpr int kInlineResultPad = 8;          ///< 徽标左右内边距（C++ 侧算进宽度）
+constexpr int kInlineGap = 6;                ///< 徽标与 ✕ / 文字之间的间距
+constexpr int kInlineFeedbackMs = 1200;      ///< 「已复制」停留时长
+constexpr int kSearchTextPad = 12;           ///< 与 qss 里搜索框的左 padding 对齐
 constexpr int kNameMaxWidth = kTileWidth - 12;
 constexpr int kIntentIcon = 34;   ///< 建议条左侧工具图标
 /// 数字角标：18px 方块放在左上角的 3px 留白里。位置写死是因为磁贴尺寸固定、
@@ -398,6 +407,23 @@ void HomePage::buildUi()
     m_searchClear->hide();
     // 点 ✕ 要连粘贴进来的图片一起清掉，所以不能直接接 QLineEdit::clear
     connect(m_searchClear, &QToolButton::clicked, this, &HomePage::clearSearch);
+
+    // 算式结果徽标：贴在框内右侧，与 ✕ 同一层（都是 QLineEdit 的子控件、手动摆位）。
+    // 为什么塞进输入框而不是做成结果条：用户要的是「就地看到答案」——视线不用离开
+    // 正在敲的那行字，也不占网格的空间，更不会替用户打开一个他不需要的面板。
+    m_inlineResult = new QLabel(m_search);
+    m_inlineResult->setObjectName(QStringLiteral("homeSearchResult"));
+    m_inlineResult->setAlignment(Qt::AlignCenter);
+    m_inlineResult->setFocusPolicy(Qt::NoFocus);   // 不抢焦点，点完仍能继续输入
+    m_inlineResult->setCursor(Qt::PointingHandCursor);
+    m_inlineResult->installEventFilter(this);      // 点击 = 复制
+    m_inlineResult->hide();
+
+    m_inlineTimer = new QTimer(this);
+    m_inlineTimer->setSingleShot(true);
+    m_inlineTimer->setInterval(kInlineFeedbackMs);
+    connect(m_inlineTimer, &QTimer::timeout, this, [this] { setInlineFeedback(false); });
+
     connect(m_search, &QLineEdit::textChanged, this, [this](const QString &text) {
         m_searchClear->setVisible(!text.isEmpty());
         // 粘贴图片后用户又开始打字：以文字为准，把图片丢掉（否则会一直停在 OCR 建议上）
@@ -642,8 +668,14 @@ void HomePage::rebuild()
 
     // 建议条：贴图时它独占首页（此时上面两个分支不会产出任何磁贴），
     // 文字输入时要先知道「有没有命中」才能决定要不要给翻译建议。
+    // 就地求值要排在建议之前：它决定了这段输入是不是「已经算出了答案」，
+    // 而这会改变建议的判定（见下面 updateIntent 的第二个实参）。
+    updateInlineResult();
+
     const bool hasHits = !m_allTiles.isEmpty() || !m_appTiles.isEmpty();
-    updateIntent(query, hasHits);
+    // 已经就地算出结果时不再给翻译建议：`pi*2` 这类输入会被 isEnglishText 判成英文，
+    // 结果左边挂一张「翻译 pi*2」的建议条，右边却又显示 6.28，自相矛盾。
+    updateIntent(query, hasHits || !m_inlineValue.isEmpty());
 
     // 分组显隐统一按内容判断：「没有工具只有应用」时不能留下一个空的「全部」标题
     m_recentBox->setVisible(!m_recentTiles.isEmpty());
@@ -652,11 +684,14 @@ void HomePage::rebuild()
 
     // 「什么都没搜到」分两种：给了建议就把位置让给建议条，没建议才提示找不到。
     // 贴图但 OCR 插件没加载也走这里，文案要具体（否则用户会以为图片没粘上）。
+    // 已经就地算出算式结果时同样不提示：答案就在搜索框里，再喊一句「没找到」
+    // 只会让用户以为结果不作数。
     const bool imageMode = !m_pendingImage.isNull();
     m_noResult->setText(imageMode
                             ? QStringLiteral("已粘贴图片，但没找到能识别文字的 OCR 工具")
                             : QStringLiteral("没有找到匹配的工具或应用"));
-    m_noResult->setVisible((imageMode || !query.isEmpty()) && !hasHits && !m_intentData.valid());
+    m_noResult->setVisible((imageMode || !query.isEmpty()) && !hasHits && !m_intentData.valid()
+                           && m_inlineValue.isEmpty());
 
     // 视觉顺序 = 键盘导航顺序 = 数字角标顺序
     m_tiles = m_recentTiles + m_allTiles + m_appTiles;
@@ -792,6 +827,141 @@ QImage HomePage::clipboardImage()
             image = pixmap.toImage();
     }
     return image;
+}
+
+// ---------------------------------------------------------------------------
+// 就地求值：搜索框右侧的结果徽标
+//
+// 交互约定（README 里也有）：
+//   * 输入能算的算式 → 框内出现「= 96」，不弹面板、不列磁贴、不抢焦点；
+//   * 回车 / 点徽标 → 把结果整段复制到剪贴板，徽标短暂变成「已复制」；
+//   * 结果变了 / 清空输入 → 徽标立刻消失，上一次的「已复制」反馈一并作废。
+// ---------------------------------------------------------------------------
+
+void HomePage::updateInlineResult()
+{
+    if (!m_inlineResult || !m_search)
+        return;
+
+    // 贴图时文字已被清空（见 setPendingImage），此时不该再有算式结果
+    quickcalc::Result result;
+    if (m_pendingImage.isNull() && !m_search->text().trimmed().isEmpty())
+        result = quickcalc::evaluate(m_search->text());
+
+    const QString value = result.ok ? result.text : QString();
+    if (value != m_inlineValue) {
+        m_inlineValue = value;
+        // 结果换了，上一次的「已复制」必须立刻作废 —— 否则会把新结果说成已复制。
+        // 这里直接改属性再 repolish，不走 setInlineFeedback()：那个函数会按旧的
+        // m_inlineValue 重画一遍，等于多闪一次。
+        m_inlineTimer->stop();
+        if (m_inlineResult->property("feedback").toBool()) {
+            m_inlineResult->setProperty("feedback", false);
+            m_inlineResult->style()->unpolish(m_inlineResult);
+            m_inlineResult->style()->polish(m_inlineResult);
+        }
+    }
+
+    if (m_inlineValue.isEmpty()) {
+        m_inlineResult->hide();
+        // 徽标不在了，右边距收回：长表达式可以一直写到 ✕ 前面
+        if (m_search->textMargins().right() != 0)
+            m_search->setTextMargins(0, 0, 0, 0);
+        return;
+    }
+
+    refreshInlineBadge();
+    m_inlineResult->show();
+    m_inlineResult->raise();
+    positionSearchOverlays();
+}
+
+void HomePage::refreshInlineBadge()
+{
+    if (!m_inlineResult || m_inlineValue.isEmpty())
+        return;
+
+    const bool copied = m_inlineResult->property("feedback").toBool();
+    const QString full = copied ? QStringLiteral("已复制")
+                                : QStringLiteral("= %1").arg(m_inlineValue);
+
+    // 字号与宽度都在代码里定：徽标是 QLineEdit 的子控件，几何手动控制，
+    // 若让 qss 设 font-size，下面按 QFontMetrics 算出的宽度就对不上、文字会被裁。
+    // 字体族沿用搜索框，视觉上与输入的文字同一套字。
+    QFont font = m_search->font();
+    font.setPixelSize(13);
+
+    const QFontMetrics fm(font);
+    const int textWidth = fm.horizontalAdvance(full);
+    const int maxTextWidth = kInlineResultMaxWidth - 2 * kInlineResultPad;
+    // 结果过长（2^1000 这类）按像素省略；复制走的仍是完整值，完整值放 tooltip
+    const QString shown = textWidth > maxTextWidth
+        ? fm.elidedText(full, Qt::ElideRight, maxTextWidth)
+        : full;
+
+    m_inlineResult->setFont(font);
+    m_inlineResult->setText(shown);
+    m_inlineResult->setFixedSize(qMin(textWidth, maxTextWidth) + 2 * kInlineResultPad,
+                                 fm.height() + 2);
+    m_inlineResult->setToolTip(copied ? QString()
+                                      : QStringLiteral("%1\n回车或点击复制").arg(full));
+}
+
+void HomePage::positionSearchOverlays()
+{
+    if (!m_search)
+        return;
+
+    // ✕ 贴右内缘；徽标紧挨在 ✕ 左侧
+    int clearX = m_search->width() - kSearchClearGap;
+    if (m_searchClear) {
+        clearX = m_search->width() - kSearchClearGap - m_searchClear->width();
+        m_searchClear->move(clearX, (m_search->height() - m_searchClear->height()) / 2);
+        m_searchClear->raise();
+    }
+
+    if (m_inlineResult && m_inlineResult->isVisible()) {
+        // 窗口很窄时不让徽标越过文字起始处（左侧 padding），宁可它盖住 ✕
+        const int x = qMax(kSearchTextPad, clearX - kInlineGap - m_inlineResult->width());
+        m_inlineResult->move(x, (m_search->height() - m_inlineResult->height()) / 2);
+        m_inlineResult->raise();
+
+        // 给右侧让出徽标的宽度，否则正在输入的表达式会钻到徽标底下。
+        // 比较后再设：setTextMargins 每次都会让 QLineEdit 重算几何，
+        // 在 resize 里无脑调用容易变成「改边距 → 重排 → 再改」的循环。
+        const int wanted = m_inlineResult->width() + 2 * kInlineGap;
+        if (m_search->textMargins().right() != wanted)
+            m_search->setTextMargins(0, 0, wanted, 0);
+    }
+}
+
+void HomePage::setInlineFeedback(bool on)
+{
+    if (!m_inlineResult || m_inlineResult->property("feedback").toBool() == on)
+        return;
+
+    m_inlineResult->setProperty("feedback", on);
+    // 动态属性变了必须 unpolish/polish，qss 的 [feedback="true"] 才会重新求值
+    // （与 LauncherTile 的 hover/current 同一套路）
+    m_inlineResult->style()->unpolish(m_inlineResult);
+    m_inlineResult->style()->polish(m_inlineResult);
+
+    // 文字在「= 96」与「已复制」之间切换，宽度会变，位置/边距都要跟着重算
+    refreshInlineBadge();
+    positionSearchOverlays();
+}
+
+void HomePage::copyInlineResult()
+{
+    if (m_inlineValue.isEmpty())
+        return;
+
+    QGuiApplication::clipboard()->setText(m_inlineValue);
+    setInlineFeedback(true);
+    m_inlineTimer->start();   // 到点自动复位成「= 结果」
+
+    // 焦点留在搜索框：复制完通常还要接着改算式，不该把用户的手赶走
+    m_search->setFocus(Qt::OtherFocusReason);
 }
 
 void HomePage::showEmptyState(bool empty)
@@ -954,6 +1124,14 @@ void HomePage::moveCurrent(int delta)
 
 bool HomePage::activateCurrent()
 {
+    // 就地求值优先于一切：答案已经摆在那行了，回车就是「把这个数拿走」，
+    // 而不是替用户打开一个他并不需要的面板（这就是「不用打开面板」的落点）。
+    // 用方向键选过磁贴时不算 —— 那是用户明确要打开那一项。
+    if (!m_inlineValue.isEmpty() && m_currentIndex < 0) {
+        copyInlineResult();
+        return true;
+    }
+
     // 建议条优先：用户还没用方向键挑具体磁贴时，回车就是「按建议办」。
     // 一旦按过方向键（m_currentIndex >= 0），说明他明确选中了某个磁贴，按磁贴走。
     if (m_intentData.valid() && m_currentIndex < 0) {
@@ -979,14 +1157,26 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
         return false;
     }
 
-    if (watched == m_search) {
-        // 清空按钮跟随搜索框尺寸摆位：它是搜索框的子控件，几何完全手动控制
-        if (event->type() == QEvent::Resize) {
-            if (m_searchClear) {
-                m_searchClear->move(m_search->width() - kSearchClearGap - m_searchClear->width(),
-                                    (m_search->height() - m_searchClear->height()) / 2);
-                m_searchClear->raise();
+    // 结果徽标：单击 = 复制（与回车同一动作）。双击要吞掉 —— 否则会冒泡成
+    // QLineEdit 的双击选词，把徽标位置上的文字选中，看着像复制到了别的东西。
+    if (m_inlineResult && watched == m_inlineResult) {
+        if (event->type() == QEvent::MouseButtonRelease) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton
+                && m_inlineResult->rect().contains(me->position().toPoint())) {
+                copyInlineResult();
+                return true;
             }
+        } else if (event->type() == QEvent::MouseButtonDblClick) {
+            return true;
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    if (watched == m_search) {
+        // 清空按钮与结果徽标都挂在搜索框上，几何完全手动控制，尺寸一变就重摆
+        if (event->type() == QEvent::Resize) {
+            positionSearchOverlays();
             return false;
         }
 

@@ -1,6 +1,6 @@
 #include "CalcTool.h"
 
-#include "ExprEval.h"      // 纯求值逻辑（可单独测试，见 AGENTS.md 的验证流程）
+#include "ExprEval.h"      // 纯求值逻辑，住在 src/api（宿主首页的就地求值也用它）
 #include "ThemePalette.h"   // 颜色令牌：宿主与插件共用，深色主题下才不会留白底
 
 #include <QLabel>

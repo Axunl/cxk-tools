@@ -22,6 +22,8 @@
 //   * 搜索框顶部会按输入内容给一条「建议条」（SearchIntent 区段）：贴进一段 JSON、
 //     贴进一张图片、或输入英文却什么都没搜到时，建议条把「交给哪个工具、会带什么
 //     内容进去」摆在最前面 —— 此时回车走建议，而不是走搜索结果。
+//   * 算式就地求值：输入 12*8 时，结果以「= 96」的小徽标贴在搜索框右侧（不弹面板、
+//     不列磁贴），回车或点徽标即复制到剪贴板。判定规则见 core/QuickCalc.h。
 // ---------------------------------------------------------------------------
 
 #include "IToolInput.h"
@@ -38,6 +40,7 @@ class QLabel;
 class QLineEdit;
 class QScrollArea;
 class QToolButton;
+class QTimer;
 class QVBoxLayout;
 class QHBoxLayout;
 class QMouseEvent;
@@ -224,6 +227,20 @@ private:
     /// 某些截图工具只往剪贴板放 pixmap，只查 imageData() 会拿不到，所以要回退一次。
     static QImage clipboardImage();
 
+    // ------------------------------------------------------------ 就地求值
+    /// 按当前关键词重算算式结果并刷新搜索框内的徽标；没有可算的内容就整块隐藏。
+    /// 由 rebuild() 统一调用（每次输入变化都会走到这里）。
+    void updateInlineResult();
+    /// 摆搜索框内的两个浮层：清空按钮（右内缘）与结果徽标（清空按钮左侧）。
+    /// 两者的几何都完全由代码控制（它们在 QLineEdit 内部，没有布局可依）。
+    void positionSearchOverlays();
+    /// 把当前结果整段复制到剪贴板，并让徽标短暂显示「已复制」。
+    void copyInlineResult();
+    /// 切换徽标的「已复制」反馈态（动态属性 + repolish，qss 才会换色）。
+    void setInlineFeedback(bool on);
+    /// 按当前状态（结果文本 / 反馈态）重排徽标文字与尺寸。
+    void refreshInlineBadge();
+
     ToolRegistry *m_registry = nullptr;
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
@@ -232,6 +249,9 @@ private:
     QWidget *m_top = nullptr;   ///< 搜索框那一行，空工具时整行隐藏
     QLineEdit *m_search = nullptr;
     QToolButton *m_searchClear = nullptr;   ///< 框内右侧的 ✕，随文字显隐
+    QLabel *m_inlineResult = nullptr;       ///< 框内右侧的算式结果徽标（「= 96」）
+    QString m_inlineValue;                  ///< 当前结果的纯文本（复制用），空 = 无结果
+    QTimer *m_inlineTimer = nullptr;        ///< 「已复制」反馈的复位定时器
 
     QScrollArea *m_scroll = nullptr;
     QWidget *m_content = nullptr;

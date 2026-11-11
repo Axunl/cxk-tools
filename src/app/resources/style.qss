@@ -122,6 +122,23 @@ QToolButton#homeSearchClear:pressed {
     background: @scrollbar;
 }
 
+/* 搜索框内的算式结果徽标（「= 96」）：几何由 HomePage 手算（含左右内边距），
+   这里只管配色。所以千万**不要**加 padding / font-size —— 会把文字裁掉或让
+   徽标宽度和 HomePage 算的对不上。 */
+#homeSearchResult {
+    background: @accent-soft;
+    border: 1px solid @border-accent;
+    border-radius: 7px;
+    color: @accent-text;
+}
+
+/* 复制成功后的短暂反馈：换成成功色，1.2 秒后自动回到结果本身 */
+#homeSearchResult[feedback="true"] {
+    background: @success-bg;
+    border-color: @success-border;
+    color: @success-text;
+}
+
 #homeScroll,
 #homeContent {
     background: transparent;
