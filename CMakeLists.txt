@@ -105,6 +105,7 @@ add_subdirectory(plugins/filelock)
 add_subdirectory(plugins/ocr)
 add_subdirectory(plugins/translate)
 add_subdirectory(plugins/colorpicker)
+add_subdirectory(plugins/screenshot)
 add_subdirectory(plugins/jwt)
 add_subdirectory(plugins/md5)
 add_subdirectory(plugins/cron)
@@ -116,6 +117,7 @@ add_subdirectory(plugins/qrcode)
 add_subdirectory(plugins/memes)
 add_subdirectory(plugins/finance)
 add_subdirectory(plugins/hotsearch)
+add_subdirectory(plugins/screenrec)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。

@@ -13,15 +13,20 @@
 //   * 每个工具最多一个独立窗口（ToolWindow），重复打开只前台化已有窗口。
 //     独立窗口主窗口收起时继续存活，退出时统一关闭（关闭动作在 prepareQuit()，
 //     因为 qApp->quit() 不会给窗口发 closeEvent）。
+//   * 「弹独立窗口」是**搬**不是**抄**：工具页里点页头「独立窗口」或双击标题栏，
+//     当前内嵌面板会整块移交给独立窗口（同一个 QWidget 实例），正在编辑的内容、
+//     光标、撤销栈、滚动位置全部原样过去，然后主窗口回到首页。详见 popOutTool()。
 //   * 关闭按钮与 Esc 语义：首页 → 收进托盘；工具页/设置页 → 先回首页。
 //     真正退出必须先 prepareQuit()，否则会被 closeEvent 拦下。
 // ---------------------------------------------------------------------------
 
 #include "IToolInput.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QKeySequence>
 #include <QMainWindow>
+#include <QPoint>
 #include <QPointer>
 #include <QString>
 
@@ -57,6 +62,9 @@ public:
                   const xtools::ToolInput &input = xtools::ToolInput());
 
     /// 把工具弹成独立窗口。已有该工具的窗口时不新建，只前台化。
+    ///
+    /// 若该工具此刻正以内嵌面板的形式显示在主窗口里，面板会被**移交**给独立窗口
+    /// （不是重新 createPanel），所以用户正在编辑的内容不会丢；移交后主窗口回首页。
     void popOutTool(const QString &toolId);
 
     void showSettings();
@@ -94,6 +102,15 @@ private:
     void buildUi();
     void createToolPanel(const QString &toolId, const xtools::ToolInput &input);
     void destroyToolPanel();
+
+    /// 把当前内嵌面板从主窗口**摘下来交给调用方**（不销毁，不重新创建）。
+    /// @return 该工具的面板；当前显示的不是这个工具时返回 nullptr（调用方自行 createPanel）。
+    /// 摘下来之后主窗口回首页：工具已经不在主窗口里了，留一个空壳工具页没有意义。
+    QWidget *takeCurrentToolPanel(const QString &toolId);
+
+    /// 标题栏「双击两下」的入口：只有当前在工具页时才真的弹窗（首页/设置页静默忽略）。
+    void popOutCurrentTool();
+
     void updateHeader(const QString &title, const QString &desc);
     /// 记录一次「用户主动打开了这个工具」：频次 + 首页的最近使用。
     void markUsed(const QString &toolId);
@@ -125,4 +142,11 @@ private:
 
     QHash<QString, QPointer<ToolWindow>> m_toolWindows;   ///< 每工具最多一个独立窗口
     bool m_forceClose = false;
+
+    /// 标题栏「两下」的自判定状态。为什么要自己算：第一次按下就把拖动交给了
+    /// startSystemMove()，Windows 的原生移动循环会占住鼠标，随后的第二次按下
+    /// 未必还会变成 Qt 的 MouseButtonDblClick（详见 eventFilter 里的说明）。
+    QElapsedTimer m_titleClickTimer;   ///< 上一次按下的时刻（单调时钟，不受系统时间调整影响）
+    QPoint m_titleClickPos;            ///< 上一次按下的位置，用来排除"两下"落在不同地方
+    bool m_titleClickValid = false;    ///< 计时器是否有效（首次按下前为 false）
 };

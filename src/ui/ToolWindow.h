@@ -11,6 +11,9 @@
 //     用户会以为窗口丢了。
 //   * 面板生命周期绑窗口：关窗即销毁面板（与主窗口「不缓存面板」的约定一致）。
 //     同一工具可以同时有「内嵌面板」和「独立窗口面板」两份实例，插件不得假设单实例。
+//   * 「从主窗口弹出来」时**接管**那个内嵌面板（构造参数 panel 非空），而不是再
+//     createPanel() 一份：用户正在编辑的内容、光标、撤销栈、滚动位置都在那个 QWidget
+//     实例里，重新创建等于把数据丢了。面板是纯 QWidget，跨顶层窗口 reparent 是合法的。
 //   * 每个工具最多一个独立窗口，去重由 MainWindow 负责。
 // ---------------------------------------------------------------------------
 
@@ -24,7 +27,10 @@ class ToolWindow : public QWidget
     Q_OBJECT
 
 public:
-    explicit ToolWindow(const ToolEntry &entry, QWidget *parent = nullptr);
+    /// @param entry      工具条目（取 id / 名称 / 图标）
+    /// @param panel      宿主移交过来的现成面板；为空时自己 createPanel() 一份新的
+    /// @param parent     父窗口，正常都是 nullptr（独立顶层窗口）
+    explicit ToolWindow(const ToolEntry &entry, QWidget *panel = nullptr, QWidget *parent = nullptr);
 
     QString toolId() const { return m_toolId; }
 

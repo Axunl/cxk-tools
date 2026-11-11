@@ -200,6 +200,8 @@ cxk-tools/
 │   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
 │   ├── translate/{TranslateTool.*, TranslatePanel.*, TranslateLogic.h}
 │   ├── colorpicker/{ColorPickerTool.*, ColorPickerPanel.*, ColorText.h, ColorProbe.h}
+│   ├── screenshot/{ScreenshotTool.*, ScreenshotPanel.*, CaptureOverlay.*, ScrollSession.*,
+│   │              ScreenGrab.*, Stitch.h}
 │   ├── ocr/{OcrTool.*, OcrPanel.*, OcrEngine.*, OcrOnnx.*, OcrCapture.*, OcrText.h, OcrPostprocess.h,
 │   │        models/（ch_PP-OCRv4 det/rec ONNX + ppocr_keys_v1.txt，随程序分发，勿手改）}
 │   ├── cron/{CronTool.*, CronPanel.*, CronExpr.h}
@@ -260,11 +262,15 @@ cxk-tools/
 5. 工具面板**不缓存**：每次进入工具都 `createPanel()` 新建面板；离开视图（回首页、进设置、
    收起窗口）即销毁面板（`destroyToolPanel()`），输入值随之清空。同一工具可以同时存在
    「内嵌面板」与「独立窗口面板」两份，插件不得假设自己是唯一实例。
+   例外是「弹独立窗口」：那是把内嵌面板**搬**过去（`takeCurrentToolPanel()`），不新建第二份。
 6. 使用频次与「最近使用」只在用户主动打开工具/应用时记账（`markUsed()` / `launchLocalApp()`），
    启动与唤出不算。工具与应用共用同一份最近使用（上限 8），按时间戳混排。
 7. 独立窗口（`ToolWindow`）每个工具最多一个，重复打开只 `raise + activateWindow`；
    主窗口收起时独立窗口继续存活；退出时由 `prepareQuit()` 统一关闭 —— **不能放在
    `closeEvent` 里，`qApp->quit()` 不会给窗口发 closeEvent**。
+   从工具页弹出（页头「独立窗口」/ 双击标题栏）走 `popOutTool()`：当前内嵌面板整块移交给
+   `ToolWindow`（同一个 QWidget 实例，数据自然跟着走），主窗口随即 `showHome()`。
+   已有独立窗口时只前台化，主窗口那份原样保留。
 8. 本机应用只从系统入口索引（`LocalAppIndex`），**不做全盘扫描**；启动统一交给系统
    （Windows/macOS `QDesktopServices`，Linux `gio launch` 再退回 `Exec`）。
    启动成功后主窗口 `close()` 收进托盘（启动器语义，别改成留在原地）。
@@ -804,6 +810,11 @@ add_subdirectory(plugins/mytool)
 - 主窗口：无边框 + 自绘标题栏；最小 `920×580`，默认 `1120×720`（首次启动；之后从
   `ui/main_geometry` 恢复），标题栏高 `46`，左右内容留白 `28`。右下角 `QSizeGrip`，
   在 `resizeEvent` 里重新定位（恢复几何后也靠这里重摆）。
+- 标题栏：按住拖动 = `startSystemMove()`；**双击 = 把当前工具连同内容弹成独立窗口**
+  （`MainWindow::popOutCurrentTool()`，首页/设置页静默忽略）。双击判定有两条路：
+  ① 标准 `MouseButtonDblClick`；② 自己在 `MouseButtonPress` 里按「时间差 ≤
+  `QApplication::doubleClickInterval()` + 位移 ≤ 8px」再判一次 —— 第一次按下已经把
+  拖动交给系统移动循环（Windows 会接管鼠标），第二次按下有可能只是普通 Press。
 - 页面是三层栈：`HomePage`（首页网格，页头隐藏）/ `SettingsPage` / 动态工具面板。
   页头在工具页与设置页显示，含「← 首页」、标题/描述、「独立窗口」（设置页隐藏）。
 - 首页网格：磁贴固定 `104×100`（图标 48），列数 = `(视口宽 - 2*28 - 12) / (104 + 8)`。
@@ -812,6 +823,7 @@ add_subdirectory(plugins/mytool)
   最近使用 → 工具结果 → 应用结果。空关键词时应用不展示（只可能出现在「最近使用」里）。
 - 独立窗口 `ToolWindow`：原生边框（不加 `FramelessWindowHint`、不用 `Qt::Tool`），
   `WA_DeleteOnClose`，面板随窗口销毁；去重表 `QHash<QString, QPointer<ToolWindow>>` 在 `MainWindow`。
+  构造函数第二参是「接管的面板」：非空就用它（从主窗口搬过来的那份），空才自己 `createPanel()`。
 - `Esc` 分层见「交互约定」第 2 条；热键捕获中的 `Esc` 由 `HotkeyButton` 吞掉只取消捕获。
 
 ## 样式（`src/app/resources/style.qss`）
@@ -1086,6 +1098,27 @@ add_subdirectory(plugins/mytool)
 - 不注册第二个全局热键：全局热键只做「唤出首页搜索」是已定型的交互约定（第二部分第 3 条），
   改它要先问。翻译 / 公式识别 / 结构化表格也不做，「表格文本」只是按空隙分列的 TSV 近似。
 
+## 截图（`plugins/screenshot`，插件内部）
+
+- 分五层：`ScreenGrab.*`（抓屏与裁剪，只走 `QScreen::grabWindow`）、`Stitch.h`（纯逻辑：位移检测
+  + 纵向画布，header-only，可直接在临时工程里断言）、`CaptureOverlay.*`（覆盖整块虚拟桌面的框选
+  遮罩，回调式、无 `Q_OBJECT`）、`ScrollSession.*`（抓帧循环 + 不抢焦点的控制条）、
+  `ScreenshotPanel.*`（界面）。
+- **滚动截图不注入滚轮事件**：`SendInput` / `XTestFakeButtonEvent` / `CGEventCreateScrollWheelEvent`
+  是三套原生代码，且 macOS 要辅助功能授权、Wayland 根本做不到（规则 3：没有实机就不要写平台原生
+  代码）。改成「用户自己滚、程序按重叠区域算位移」，三端一份实现。将来若要做自动滚动，三端都得有。
+- 高 DPI 是这里最容易错的地方：`grabWindow()` 返回的缩放比各平台并不统一，一律用「返回图宽 /
+  请求逻辑宽」反推 DPR，并把每一帧归一成「设备像素 + dpr=1」再比较与拼接，只在 `crop()` / 出图
+  那一刻把 dpr 设回去。少了归一化就会出现「某一帧被隐式缩放成 1/2」的错位。
+- 拼接的正确性靠**绝对偏移**而不是「每帧往尾部追加」：`VerticalCanvas` 记录最新帧顶端在画布里的
+  y，只有画布范围真的越界才取新行。这是「来回滚不会重复贴」的唯一原因，改这里要想清楚。
+- 位移检测的已知退化：内容高度重复时多个 dy 同分，取 |dy| 最小的那个，长图可能重复；
+  一帧内滚动超过选区高度的 80% 会匹配失败（当作「没动」）。
+- 会话有三个结束条件（点完成 / 停手 2.5 秒 / 长图到 20000 像素），都在 `ScrollSession::tick()`
+  里；改阈值必须同步 README「截图」小节写的 2.5 秒与 20000 像素。
+- 控制条必须 `WA_ShowWithoutActivating` + `WindowDoesNotAcceptFocus`：少了这两条，一弹出就抢走
+  焦点，用户会以为「滚不动了」。
+
 ## 文件占用释放（`plugins/filelock`，插件内部）
 
 - 三层同 procmon：`FileLockLogic.h`（纯 Qt Core：路径解析 / 展开 / 归一化 / 匹配 / 按 pid 归并，
@@ -1239,6 +1272,59 @@ add_subdirectory(plugins/mytool)
 - 主题色只能走 `xtools::theme::applyStyle()` / `color()`：`color()` 内部是 `QColor(QString)`，
   解析不了 `rgba(255,255,255,235)` 这种 CSS 函数式写法（拿到无效色，`fillRect` 等于什么都没画）。
 
+## 屏幕录制（`plugins/screenrec`，插件内部）
+
+- 分层：`AviMjpegWriter.h`（**只依赖 QtCore**，MJPEG-in-AVI 流式写入）、`ScreenGrabber.h`（抓屏，
+  唯一碰原生 GDI 的地方）、`CursorPainter.h`（光标位图与落图）、`FrameQueue.h`（有界队列）、
+  `RecorderWorker`（写盘线程体，无 `Q_OBJECT`）、`RecordService`（**模块级单例**，编排与状态）、
+  两个浮层（`CountdownOverlay` / `RegionSelectOverlay`，无 `Q_OBJECT`）、`ScreenRecPanel`（纯视图）。
+  纯逻辑做成纯 header 才能在临时工程里直接 include 验证（规则 2）。
+- **录制器必须是模块级单例，不能挂在面板上**。宿主不缓存面板（回首页 / 切设置 / 切工具 / 关主
+  窗口进托盘都会 `deleteLater()`），挂面板上等于「用户点一下首页，录了三分钟的视频就被截断」。
+  面板只订阅 `stateChanged/statsChanged/finished/failed`，析构时**什么都不做**；新面板构造时读一次
+  `RecordService::instance()` 的状态即可恢复「录制中 00:23」（幂等只读）。
+- 单例用**函数内 static**，不 `new` 也不挂 `qApp` 名下：宿主 `PluginManager::unloadAll()` 会
+  `FreeLibrary`，如果 qApp 持有它，析构时会去 delete 一段已经 unmap 的 vtable。
+- 退出收尾只能用 `aboutToQuit`（`Qt::DirectConnection` → `stopSync()`），**不能用 `qAddPostRoutine`**：
+  它登记的是本 DLL 里的函数指针，unload 之后悬空，而 post routine 恰恰在那之后才跑。
+- **AVI 结构的三个死穴**（改 `AviMjpegWriter.h` 前先看 `avi::` 里的偏移常量，两份独立校验脚本都对过）：
+  ① `idx1` 的 `dwChunkOffset` **相对 `'movi'` 四字符**，所以第一帧恒为 4（不是 0 也不是 224）；
+  ② RIFF 的奇数长度 chunk 必须补 1 字节，补位**计入** `movi`/`RIFF` 的 size，**不计入** chunk size
+  与 idx1 的 `dwChunkLength`；③ `RIFF` 的 size 必须**最后**写（追加 idx1 之后），否则播放器读到
+  的文件长度是错的。头部固定 224 字节到第一帧数据，偏移全在 `avi::kOff*` 里，不要在别处写魔数。
+- 每 `qMax(8, fps/2)` 帧做一次 `checkpoint()`：回填 `dwTotalFrames` / `dwLength` / `movi` size /
+  `riffSize`，**刻意不 flush**（write 已进 page cache）。这样进程被强杀留下的文件「没有索引但能
+  顺序播放」；不 checkpoint 的话强杀得到的文件 `riffSize` 还是 0，播放器直接拒绝打开。
+- **抓屏重入保护不能用互斥锁**。`QScreen::grabWindow()` / `BitBlt` 在 Windows 上会转消息泵，
+  嵌套的定时器 tick 会并发改写同一个隐式共享 `QImage` 的引用计数 → 堆损坏 `0xC0000374`。
+  用 `GrabbingGuard`（`bool` 标志 + RAII）挡住第二次抓屏，返回 `busy=true` 让调用方只计数。
+- Windows 抓屏走 **`GetDC(NULL)` + `CreateDIBSection` + `BitBlt(SRCCOPY|CAPTUREBLT)`** 快路径
+  （实测 2560×1600 约 20ms，`QScreen::grabWindow` 约 41ms）；多屏 DPR 不一致时回退 Qt 路径，
+  因为快路径假定所有屏同一缩放比。
+- 光标：`hbmColor` 为空时是**单色光标**（只有 AND/XOR 掩码，位图高度是光标的两倍），必须自己
+  按「AND=1 & XOR=0 → 透明、0&0 → 黑、其余 → 白」合成，否则这台机器上取不到任何光标。
+  落图用 `drawImage(pos - hotspot)` 且关掉 `SmoothPixmapTransform`（放大插值会糊边）。
+- 恒定帧率 + **补重复帧**：MJPEG AVI 没有逐帧时间戳，视频时长严格等于「帧数 / fps」。所以 tick
+  按「此刻总共该写几帧」算欠账（`elapsed*fps/1000 - m_scheduled`），一次最多补 4 帧，超过就清账
+  跳过并计入 `skipped`；队列满时丢**新**帧（丢旧帧会让画面时间倒退）。
+- 开始录制前**先预抓一帧**：同时解决三件事 —— Wayland / macOS 未授权会在这一步立刻暴露（而不是
+  录完才发现是黑屏）、用实际抓到的尺寸当视频尺寸（比按 DPR 推算可靠）、这一帧直接作为第一帧写进
+  去不浪费。`beginRecording()` 靠一次性准入票 `m_beginArmed` 进门，**不能拿 `m_state` 当门票**：
+  没开倒计时时状态是 `Idle`，倒计时被取消后也是 `Idle`，两者区分不了（前者必须开始、后者必须不做）。
+- 倒计时浮层**必须 `WA_TranslucentBackground(true)`**。写成 `false` 时那层 alpha=110 的压暗会叠在
+  窗口自己的不透明调色板底色上，整个屏幕变成一块灰板，倒计时那 2.4 秒里用户完全看不见要录的画面。
+  它也不抢焦点（`WindowDoesNotAcceptFocus` + `WA_ShowWithoutActivating`，被录窗口标题栏不会变灰），
+  代价是收不到键盘，取消方式只能是单击。走完到 `beginRecording()` 之间留 260ms 让合成层撤干净。
+- 框选矩形**不要写 `QRect(m_start, m_current).normalized()`**：`QRect` 存闭区间端点，这个构造 +
+  `normalized()` 会在反转的两边各内缩 1 像素（从 (400,300) 拖到 (900,700) 得 501×401，反过来拖只有
+  499×399，同一块区域给出两个尺寸）。用 `qMin/qMax` 显式构造，两个方向都是 `|d|+1`。
+  浮层上显示的尺寸要乘 DPR（用户看到的数字必须等于视频的真实像素）。
+- 转 MP4 走外部 `ffmpeg`（`-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p`），
+  `PATH` 里没有就**隐藏按钮**而不是给个点了报错的入口。MJPEG 解出来的尺寸可能是奇数，
+  yuv420p 要求偶数，所以滤镜链必须是 `pad=ceil(iw/2)*2:ceil(ih/2)*2`。
+- 不做音频、暂停 / 续录、摄像头画中画、多屏同时录制、跨屏框选（一次只录一块屏，与 OCR 一致）。
+  面板不注册任何全局热键（全局热键只做「唤出首页搜索」）。
+
 ## 日志
 
 - 位置：`QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log`（不可漫游目录，避免企业漫游配置同步日志）。
@@ -1293,6 +1379,7 @@ add_subdirectory(plugins/mytool)
 | 首页磁贴只排一列、之后不再重排 | 列数按滚动区视口宽度算，首帧视口还没拿到真实宽度；只监听 `HomePage::resizeEvent` 会漏掉视口自己的尺寸变化 | 视口也装 `eventFilter`，`Resize` 时 `reflow()`；列数没变时直接 return |
 | 网格列数在滚动条出现/消失时反复抖动 | 按真实 viewport 宽度算列数，滚动条占掉 10px → 少一列 → 变矮 → 滚动条消失 → 多一列 … | 列数公式恒定扣 `kScrollbarReserve`(12px) |
 | 退出程序后独立窗口还留着、几何没存 | `qApp->quit()` 不会给窗口发 `closeEvent` | 清理放 `MainWindow::prepareQuit()`（存几何 + `closeAllToolWindows()`） |
+| 从工具页弹出去的独立窗口一片空白（但 `same-widget` 检查又证明面板确实在窗口里） | `QStackedWidget::removeWidget()` 之前会 `hide()` 面板，`WA_WState_Hidden` 记在控件上，父窗口 `show()` 带不出来 | `ToolWindow` 接管面板后显式 `m_panel->show()` 一次 |
 | 同一秒内开的两个工具，「最近使用」顺序不对 | 时间戳只有秒级精度，退化成按 id 排序；且 `toSecsSinceEpoch()` 会把毫秒抹掉 | 写 `ISODateWithMs`，排序用 `toMSecsSinceEpoch()` |
 | `--shot` 截出来的永远是首页 | `showMainWindow()` 会 `showHome()`，切页动作排在它前面就被覆盖 | 先 `showMainWindow()`，再 `--tool` / `--settings` / `--popout` |
 | 折叠后读出来的全文少了内容 | `QPlainTextEdit::toPlainText()` 对隐藏块的处理没有文档保证 | 用 `JsonEditor::fullText()`（逐块拼） |

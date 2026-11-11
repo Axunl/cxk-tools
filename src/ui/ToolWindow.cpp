@@ -20,7 +20,7 @@ constexpr int kTopPadding = 12;
 
 } // namespace
 
-ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *parent)
+ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *panel, QWidget *parent)
     : QWidget(parent, Qt::Window)
     , m_toolId(entry.info.id)
 {
@@ -48,15 +48,27 @@ ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *parent)
     rootLayout->setContentsMargins(0, kTopPadding, 0, 0);
     rootLayout->setSpacing(0);
 
-    m_panel = entry.tool ? entry.tool->createPanel(nullptr) : nullptr;
+    // 优先接管宿主移交过来的面板（从主窗口「弹出来」的场景）：那个面板里已经有
+    // 用户正在编辑的内容，重新 createPanel() 只会得到一张空面板。
+    // 否则（磁贴右键 / 命令行 --popout）自己新建一份。
+    m_panel = panel;
+    if (!m_panel && entry.tool)
+        m_panel = entry.tool->createPanel(nullptr);
     if (!m_panel) {
         // 插件违约（返回空）时给占位页，绝不崩溃
         auto *fallback = new QLabel(QStringLiteral("这个工具没有返回面板"), m_root);
         fallback->setAlignment(Qt::AlignCenter);
         m_panel = fallback;
     }
+    // setParent 会把面板从原来的 QStackedWidget 里彻底摘出来（调用方已先 removeWidget），
+    // 面板自身的布局、撤销栈、滚动位置都跟着走，不经过任何序列化。
     m_panel->setParent(m_root);
     rootLayout->addWidget(m_panel);
+
+    // 接管来的面板是被 removeWidget() 摘下来的，摘的时候 Qt 已经调过 hide()：
+    // 那个"隐藏"状态会一直记在控件的 WA_WState_Hidden 上，父窗口 show() 也带不出来，
+    // 症状就是独立窗口一片空白。必须显式 show() 一次把标记清掉。
+    m_panel->show();
 }
 
 void ToolWindow::showAndRaise()
