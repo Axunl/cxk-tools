@@ -83,6 +83,9 @@
 - **唯一例外：`.bat` / `.cmd`**。cmd.exe 按本地代码页（中文 Windows 是 GBK/936）逐字节解析脚本，
   存成 UTF-8 会吞换行、整个脚本崩掉（本项目已踩过两次）。这两个文件**只能纯 ASCII**，
   需要中文文案就放到 `.cpp` 里，脚本里只留英文注释与逻辑。
+- **PowerShell 脚本（`*.ps1`）同样要全文 ASCII**。它不是编码例外（UTF-8 无 BOM 是合法的），
+  但 Windows PowerShell 5.1 会按本地代码页解析无 BOM 的脚本，中文注释会让后续解析出错
+  （见踩坑表 OCR 那条）。`scripts/sign-windows.ps1` 因此连注释都是英文 —— 别"顺手翻译"。
 - 安装器脚本：`installer/windows/cxk-tools.iss` 保持 **UTF-8 无 BOM**（Inno Setup 6 会自动识别
   合法 UTF-8）。如果哪天向导里的中文变乱码，第一件事是把该文件改存成「UTF-8 with BOM」并在
   `.editorconfig` 里为 `*.iss` 记这一条例外，**不要去改文案**。
@@ -94,14 +97,15 @@
 
   ```sh
   # 1) 列出非 UTF-8 的文本文件（只扫文本后缀，别把 png 之类的二进制算进来）
-  find src plugins cmake scripts docs -type f \
+  find src plugins cmake scripts docs installer .github -type f \
     \( -name '*.cpp' -o -name '*.h' -o -name '*.txt' -o -name '*.cmake' -o -name '*.qss' \
-       -o -name '*.qrc' -o -name '*.md' -o -name '*.sh' -o -name '*.bat' \) \
+       -o -name '*.qrc' -o -name '*.md' -o -name '*.sh' -o -name '*.bat' -o -name '*.ps1' \
+       -o -name '*.yml' -o -name '*.entitlements' \) \
     | while read f; do iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1 || echo "非 UTF-8: $f"; done
   # 2) 列出带 BOM 的文件
-  grep -rlI $'\xef\xbb\xbf' src plugins cmake scripts docs
-  # 3) 列出 .bat/.cmd 里的非 ASCII 行
-  LC_ALL=C grep -n '[^ -~]' scripts/*.bat
+  grep -rlI $'\xef\xbb\xbf' src plugins cmake scripts docs installer .github
+  # 3) 列出 .bat/.cmd/.ps1 里的非 ASCII 行
+  LC_ALL=C grep -n '[^ -~]' scripts/*.bat scripts/*.ps1
   ```
 
 ## 规则 6 — 任何改动同步更新 README.md
@@ -119,6 +123,8 @@
     只会在用户点「检查更新」时表现为「已是最新」或「暂不提供该平台的安装包」。
   - 依赖或环境要求变化（Qt 版本、编译器、`libx11-dev` 等系统包）→ 改环境要求表。
   - 平台支持状态变化（某能力从"待补"变"已实现"，或反过来）→ 同步「平台差异」表与「已知边界」。
+  - 签名 / 公证相关变化（环境变量名、签名顺序、CI secret 名单、是否签名）→ 改 README 的
+    「代码签名与公证」与「已知边界」，以及本文件「代码签名与公证」一节，三处描述不能互相打架。
   - 命令行参数、配置文件位置或格式、默认快捷键、交互约定变化 → 改对应章节。
   - 对外有意义的目录结构变化（如插件目录、运行时数据路径）→ 改「目录结构」「运行时数据」。
 - README 的定位是**给使用者看的**：只写「怎么装、怎么用、能干什么」。实现细节、踩坑、
@@ -164,12 +170,14 @@ cxk-tools/
 │   ├── api/ITool.h             唯一的 ABI 边界（纯头文件，不编成库）
 │   ├── api/ThemePalette.h      颜色令牌表（浅/深两套色值）+ 内联样式解析，宿主与插件共用
 │   ├── api/IToolInput.h        可选的「带内容进入」接口（独立 IID，不改 ITool 虚表）
+│   ├── api/ExprEval.h          表达式求值器（纯逻辑）：首页就地求值与计算器插件共用
 │   ├── core/                   纯逻辑，不 include 任何 ui/ 头文件
 │   │   ├── AppController.cpp   组装层：创建对象、连信号、处理命令行
 │   │   ├── Settings.*          配置单例，INI 落盘
 │   │   ├── Theme.*             主题：跟随系统/浅色/深色；落地调色板 + qss + 控件内联样式
 │   │   ├── ToolRegistry.*      工具条目容器 + 搜索评分
 │   │   ├── QueryIntent.h       纯逻辑：识别「JSON / 图片 / 英文」三种搜索意图（可单测）
+│   │   ├── QuickCalc.h         纯逻辑：判定「这段输入该不该当算式算」+ 就地求值（可单测）
 │   │   ├── LocalAppIndex.*     本机应用索引（开始菜单 / .app / .desktop）+ 启动
 │   │   ├── Pinyin.*            汉字→拼音/缩写（纯逻辑，可单测）；拼音表见下一条
 │   │   ├── PinyinData.*        生成的读音表（U+4E00–U+9FFF，勿手改，见 gen-pinyin-data.py）
@@ -194,7 +202,7 @@ cxk-tools/
 │       └── resources/          style.qss + resources.qrc
 ├── plugins/
 │   ├── jsonfmt/{JsonFmtTool.*, JsonFmtPanel.*, JsonEditor.*, JsonHighlighter.*, JsonText.h}
-│   ├── calc/{CalcTool.*, ExprEval.h}
+│   ├── calc/CalcTool.*         求值器在 src/api/ExprEval.h（与首页就地求值共用）
 │   ├── ipquery/{IpQueryTool.*, IpQueryLogic.h}
 │   ├── procmon/{ProcMonTool.*, ProcMonPanel.*, ProcProbe.*, ProcText.h}
 │   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
@@ -214,7 +222,13 @@ cxk-tools/
 │   ├── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
 │   ├── memes/{MemeTool.*, MemePanel.*, MemeTile.*, MemeGrid.*, MemePreview.*, MemeCache.*, MemeSource.h}
 │   ├── finance/{FinanceTool.*, FinancePanel.*, FinanceQuote.h}
-│   └── hotsearch/{HotSearchTool.*, HotSearchPanel.*, HotSearchSource.h}
+│   ├── hotsearch/{HotSearchTool.*, HotSearchPanel.*, HotSearchSource.h}
+│   ├── screenrec/{ScreenRecTool.*, ScreenRecPanel.*, RecordService.*, RecorderWorker.*,
+│   │              AviMjpegWriter.h, ScreenGrabber.h, CursorPainter.h, FrameQueue.h,
+│   │              CountdownOverlay.*, RegionSelectOverlay.*}
+│   └── jsrun/{JsRunTool.*, JsEngineRunner.*, JsRunConsole.h, JsRunStore.*, JsRunSamples.h}
+│                                 QJSEngine 沙箱执行 JS：worker 线程 + 3 秒超时中断 + console 桥
+│                                 （唯一需要 Qt Qml 模块的插件，Windows 另部署 Qt6Qml.dll）
 ├── assets/
 │   ├── app.ico                 Windows 图标（PNG 条目的多尺寸 ICO，被 src/app/app.rc.in 引用）
 │   ├── app.icns                macOS 图标（icp4~ic10，打包时拷进 .app/Contents/Resources）
@@ -241,7 +255,7 @@ cxk-tools/
 
 - **对象的创建顺序与信号连接只写在 `AppController::start()` 里**，不要在构造函数里互相 new，
   也不要在 ui 里直接访问 `PluginManager` 之外的东西。排查"谁触发了谁"时只看这一个文件。
-- 能写成不依赖 `QWidget` 的纯函数就写成纯函数（`ExprEval.h`、`JsonText.h` 就是范例），
+- 能写成不依赖 `QWidget` 的纯函数就写成纯函数（`src/api/ExprEval.h`、`plugins/jsonfmt/JsonText.h` 就是范例），
   这样规则 2 要求的临时测试才能直接 include 验证，而不是复制粘贴代码去测。
 
 ## 交互约定（已定型，改之前先问）
@@ -342,11 +356,11 @@ Windows 上构建结束会自动跑 `cmake/DeployQt.cmake`，把 Qt 运行库（
 ### 三平台入口
 
 ```bat
-scripts\package.bat            :: Windows：构建 -> dist\windows-x64\ -> zip -> 安装器
+scripts\package.bat            :: Windows：构建 -> dist\windows-x64\ -> 签名 -> zip -> 安装器 -> 签安装器
 ```
 
 ```sh
-scripts/package-macos.sh       # macOS：构建 -> cxk-tools.app -> strip/codesign -> dmg
+scripts/package-macos.sh       # macOS：构建 -> cxk-tools.app -> strip/prune -> 签名 -> 公证 -> dmg
                                # Linux 由 CI 直接 tar 打包（cmake --install 出来的目录 + plugins/）
 ```
 
@@ -453,6 +467,53 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
   这个判断是 `update::isPerUserInstallDir()`（纯函数，比较时带路径分隔符，
   否则 `...\AppData\LocalBackup\x` 会被误判成在 `Local` 下）。
 
+### 代码签名与公证
+
+**签名是可选的，没配证书时行为与以前完全一致**（打一行 `[warn]`，继续出未签名包）。开关只有
+环境变量，脚本里不读注册表、不写死证书路径。
+
+| 变量 | 平台 | 说明 |
+| --- | --- | --- |
+| `XTOOLS_SIGN_PFX` / `XTOOLS_SIGN_PFX_BASE64` + `XTOOLS_SIGN_PFX_PASSWORD` | Windows | PFX 路径或 base64（GitHub secret 只能存文本），密码允许为空 |
+| `XTOOLS_SIGN_THUMBPRINT` | Windows | 证书已在 `Cert:\CurrentUser\My` 时直接按指纹签（EV 硬件令牌只能走这条） |
+| `XTOOLS_SIGNTOOL` | Windows | 显式指定 signtool.exe；默认在 Windows SDK 的 `bin\<ver>\x64` 里取最新版 |
+| `XTOOLS_TIMESTAMP_URL` | Windows | RFC3161 时间戳，默认 `http://timestamp.digicert.com` |
+| `XTOOLS_MACOS_SIGN_IDENTITY` | macOS | `Developer ID Application: 名字 (TEAMID)`，启用真签名 + `--options runtime` |
+| `XTOOLS_MACOS_ENTITLEMENTS` | macOS | 授权文件，默认 `installer/macos/cxk-tools.entitlements` |
+| `XTOOLS_NOTARY_PROFILE`，或 `XTOOLS_APPLE_ID` + `XTOOLS_APPLE_APP_PASSWORD` + `XTOOLS_APPLE_TEAM_ID`，或 `XTOOLS_API_KEY_PATH` + `XTOOLS_API_KEY_ID` + `XTOOLS_API_ISSUER` | macOS | 公证凭据三选一（`package-macos.sh` 的 `NOTARY_ARGS`） |
+| `XTOOLS_REQUIRE_SIGNING=1` / `XTOOLS_REQUIRE_NOTARIZATION=1` | 两端 | 没配就失败。CI 上按「secret 是否存在」算出值，本地不设 |
+
+- **Windows 的签名逻辑在 `scripts/sign-windows.ps1`，退出码是契约**：`0` 签好且校验通过、
+  `2` 没配证书（本地，可继续）、`1` 配了但坏了（PFX 错、signtool 失败、`verify` 失败）。
+  `1` 一律让 `package.bat` 失败。**不要改成「出错也继续」**：悄悄发出未签名包正是这一步要防的。
+- **签在压缩之前**（`package.bat` 里紧跟 prune）：签名会改写 PE 头与校验和，压完再签会让 zip
+  里的副本仍是未签名的，并且 `latest.json` 的 SHA256 与用户下载到的文件对不上（更新器会直接
+  删包报「校验不通过」）。安装器另在 Inno 产出后签一次。
+- **只签自己的二进制**：`cxk-tools.exe`、`plugins\*.dll`、`setup.exe`。Qt / MSVC / onnxruntime
+  的 DLL 保留厂商签名，重签等于冒名。
+- **不用 Inno 的 `SignTool` / `SignedUninstaller`**：那条命令必须携带证书参数（密码会进进程
+  列表），且 `/S<name>="含空格的命令"` 在 cmd 里的引号处理属于踩坑表里反复出现的那类坑。
+  代价是安装时生成的 `unins000.exe` 未签名，卸载的 UAC 显示「未知发布者」——这个取舍写在
+  README「已知边界」里，改之前先说清楚。
+- **`sign-windows.ps1` 必须全文 ASCII（注释也是）**：Windows PowerShell 5.1 按本地代码页解析
+  无 BOM 的 UTF-8 脚本，中文注释会连带破坏后面的解析（与 `.bat` 同源，见踩坑表 OCR 那条）。
+- **macOS 由内向外签**：框架内 Mach-O → 其余 Mach-O → 主程序（带 entitlements）→ `.app` →
+  `.dmg`，之后 `codesign --verify --deep --strict` 必须通过。**不要用 `--deep` 去签**：它按目录
+  深度猜顺序，对嵌套 helper 不可靠，Apple 也明确说它不用于分发签名。
+- **公证顺序**：`.app` 打 zip 提交 → `stapler staple` 进 bundle → 生成 dmg → 签 dmg → 再提交并
+  装订。少一次 `staple`，用户第一次离线打开仍会被 Gatekeeper 拦（票据只在服务端，联网才查得到）。
+- **授权文件只有 `com.apple.security.cs.disable-library-validation`**：插件体系允许用户把第三方
+  `.dylib` 丢进 `Contents/MacOS/plugins`，开着库校验会被 dyld 直接拒绝（表现为插件静默不加载）。
+  不要顺手加 `allow-jit`——纯 Widgets 应用没有 QML。改授权文件要重新公证，先确认再动。
+- CI 的 secret 名单（`release.yml`，缺任意一个都不阻塞发布，只出一条 `::warning`）：
+  `WINDOWS_SIGN_PFX_BASE64`、`WINDOWS_SIGN_PFX_PASSWORD`、`MACOS_SIGN_P12_BASE64`、
+  `MACOS_SIGN_P12_PASSWORD`、`APPLE_ID`、`APPLE_APP_PASSWORD`、`APPLE_TEAM_ID`。
+  macOS 侧必须建独立钥匙串并 `set-key-partition-list`（少了它 codesign 会卡在
+  "User interaction is not allowed"），任务结束用 `if: always()` 删钥匙串。
+- 本机自测签名链路：造一张自签证书，`XTOOLS_SIGN_THUMBPRINT=<指纹>` 跑 `scripts\package.bat`，
+  出现 `[sign] done` 即链路通。`signtool verify /pa` 会因「根证书不受信任」失败，这是自签的
+  必然结果，不是脚本错；测完 `Remove-Item Cert:\CurrentUser\My\<指纹>` 清掉。
+
 ### 裁剪清单与取舍
 
 `cmake/PruneQtRuntime.cmake` 逐项删并打印字节数，每项都有「为什么能删」的注释。
@@ -468,7 +529,7 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 | `d3dcompiler_47.dll` | ≈4 MB | prune | D3D/ANGLE 才要 |
 | `Qt6Svg.dll` + `imageformats/qsvg.dll` + `iconengines/` | ≈1 MB | prune | 仓库无 `.svg`，图标是 `IconBadge` 运行期画的 |
 | `tls/qopensslbackend.dll` `tls/qcertonlybackend.dll` | ≈1.4 MB | prune | Windows 用系统 SChannel 后端，实测 HTTPS 正常 |
-| `translations/` `qml/` `generic/` | ≈2 MB | `--no-translations` + prune 兜底 | 界面文案自备；无 QML；`generic` 是 TUIO 触摸协议 |
+| `translations/` `qml/` `generic/` | ≈2 MB | `--no-translations` + prune 兜底 | 界面文案自备；`generic` 是 TUIO 触摸协议；`qml/` 只是 import 模块，**`Qt6Qml.dll` / `QtQml.framework` 必须保留**（`jsrun` 的 QJSEngine 在里面），删了它插件加载失败、工具静默消失 |
 | `vccorlib140.dll` `concrt140.dll` | 小 | prune | C++/CX 与并发运行时才用，拷 CRT 时顺带进来的 |
 
 - **VC 运行库用 app-local 而不是 `vc_redist`**：`windeployqt` 加 `--no-compiler-runtime`，
@@ -709,6 +770,24 @@ add_subdirectory(plugins/mytool)
   `ITool` 不是 QObject，必须先 dynamic_cast；插件没实现该接口是合法状态，只记一条日志。
 - 纯逻辑（`looksLikeJson` / `isEnglishText` / `forText` / `forImage`）在 `QueryIntent.h` 里，
   不依赖 QWidget，改判定规则时按规则 2 用临时断言程序验证。
+
+## 首页就地求值（`core/QuickCalc.h` + `api/ExprEval.h`）
+
+输入 `12*8` 时结果以「= 96」的小徽标贴在**搜索框内部**右侧（不弹面板、不占网格、不抢焦点），
+回车或点徽标把结果复制到剪贴板，并短暂显示「已复制」。实现要点：
+
+- **判定与求值是两件事**：`quickcalc::looksLikeExpression()` 先挡掉绝大多数关键词
+  （要求含数字 + 含二元运算符/括号；开头的 `+/−` 是一元符号，不算），再交给
+  `calc::ExprEval` 求值。别把这两步合并成「解析失败就当作不是算式」—— 每敲一个键都
+  对 `"3d"`、`"json"` 跑一遍完整解析器没有必要。
+- **求值器只有一份**：`src/api/ExprEval.h`，计算器插件与首页共用。改求值规则必须同时
+  跑两边的验证，否则会出现「首页算出 96、面板算出别的」。
+- 徽标是 `QLineEdit` 的子控件，几何（含宽度、`✕` 位置、文字右边距）全部由
+  `HomePage::positionSearchOverlays()` 按像素手算。**不要给 `#homeSearchResult` 加
+  qss 的 `padding` / `font-size`**：宽度是 C++ 算的，qss 一改就会裁字。
+- 回车优先级：就地求值（`m_currentIndex < 0` 时）> 建议条 > 磁贴。求值命中时会把
+  `hasToolHits` 置真再传给 `updateIntent()`，否则 `pi*2` 这种输入会同时冒出「翻译」建议。
+- 有求值结果时不显示「没有找到匹配的工具或应用」：答案就在框里，再喊一句没找到只会让人困惑。
 
 ## 本机应用搜索（`LocalAppIndex::search`）
 
@@ -1272,6 +1351,32 @@ add_subdirectory(plugins/mytool)
 - 主题色只能走 `xtools::theme::applyStyle()` / `color()`：`color()` 内部是 `QColor(QString)`，
   解析不了 `rgba(255,255,255,235)` 这种 CSS 函数式写法（拿到无效色，`fillRect` 等于什么都没画）。
 
+## JS 代码运行（`plugins/jsrun`，插件内部）
+
+- 分工：`JsRunConsole.h`（console 安装片段 + 输出阈值，纯数据）、`JsEngineRunner.h/.cpp`（引擎 +
+  worker 线程 + 中断 + 结果格式化）、`JsRunTool.cpp`（面板）、`JsRunStore.*`（`jsrun.ini`）。
+  内核不依赖任何界面，所以能搭临时工程直接断言（超时中断、循环引用、Store 读写都是这么验的）。
+- **引擎只能在创建它的线程里用**：`JsRunWorker::run()` 里栈上建 `QJSEngine`，`run()` 返回即销毁。
+  跨线程唯一安全的调用是 `QJSEngine::setInterrupted()`（官方文档明确线程安全、就是为打断死循环
+  设计的），这就是「3 秒超时」的全部基础。
+- **`RunContext` 的锁契约（改之前必读）**：`engine` 指针只在持 `mutex` 时读写 —— worker 负责
+  建/摘指针，主线程持锁调 `setInterrupted`。`evaluate()` 期间**绝不持锁**，否则中断会被自己挡住。
+  另有粘滞标记 `interrupted`：中断可能在引擎还没建好时就到达（刚点运行立刻切走页面），worker
+  建好引擎后必须补打一次 —— 这条是 200 次竞态压测里真实踩出来的，漏了就是死循环跑到进程退出。
+- **每次运行都新建引擎**：`setInterrupted(true)` 会一直生效到显式设回 false，被中断引擎里的
+  `var` / 全局状态也会污染下一次；新建开销在 1 ms 量级，不值得复用。
+- **console 桥的所有权**：`JsConsoleBridge` 是 `run()` 里的栈对象，`newQObject()` **之前**必须
+  `setObjectOwnership(&bridge, CppOwnership)` —— 默认的 JavaScriptOwnership 会让引擎 GC 时
+  delete 这个栈对象（双重释放）。桥只暴露一个 `log(level, text)` 槽，脚本拿不到别的宿主能力。
+- **V4 没有 `globalThis`**（Qt 6.8.3 实测）：`console` / `print` 由 C++ 侧
+  `engine.globalObject().setProperty()` 挂上去；在 JS 片段里写 `globalThis.xxx` 会直接
+  `ReferenceError`（早期版本靠非严格模式下的 `this` 碰巧能用，那是实现细节，别退回去）。
+- **销毁路径**：面板析构先 `interrupt()` 再 `wait(2s)`；等不到就与线程脱钩（线程对象在 finished
+  时自删，`RunContext` 由 `shared_ptr` 保活），**绝不 terminate、也绝不 delete 正在跑的 QThread**。
+  实测「运行中销毁面板」在 20 ms 内返回。
+- Windows 上 QJSEngine 要 `Qt6Qml.dll`：插件目标自己 `POST_BUILD` 拷到 `bin/`（windeployqt 只看
+  主程序 exe 的导入表），`install(FILES ...)` 负责 staging，`package.bat` 另有存在性校验。
+
 ## 屏幕录制（`plugins/screenrec`，插件内部）
 
 - 分层：`AviMjpegWriter.h`（**只依赖 QtCore**，MJPEG-in-AVI 流式写入）、`ScreenGrabber.h`（抓屏，
@@ -1350,6 +1455,8 @@ add_subdirectory(plugins/mytool)
 | 配置写不进 ini，或者 `setPath` 没用 | `QSettings` 默认构造在 Windows 上走注册表 | `QSettings(path, IniFormat)` + `setFallbacksEnabled(false)` |
 | ini 里出现 `[%General]` | `[General]` 是 INI 保留段名，Qt 会转义 | 组名用 `settings` |
 | `QLocalServer` 相关链接失败 | 它属于 Qt Network 模块 | `find_package(... Network)` + 链接 `Qt6::Network` |
+| 配置阶段报 `Qt6QmlConfig.cmake not found` | 安装的 Qt 缺 Qt Declarative 模块（根 `find_package` 现在要 `Qml` 组件，`jsrun` 用其中的 QJSEngine） | 官方安装器补勾 Qt Declarative；Linux 装 `qt6-declarative-dev`；CI 若报同样错，给 `install-qt-action` 加 `modules: qtdeclarative` |
+| 首页少了「JS 代码运行」，`app.log` 里 `jsrun` 加载失败 | `bin/` 缺 `Qt6Qml.dll`：QJSEngine 在 QtQml 里，而 `windeployqt` 只按主程序 exe 的导入表部署，看不到插件依赖 | 重新构建 `jsrun` 目标（`POST_BUILD` 会拷 `$<TARGET_FILE:Qt6::Qml>`）；也可手动从 Qt 的 `bin` 拷一份进 `build/bin`。发布包由 `package.bat` 的 staging 校验兜底 |
 | 退出时崩在释放 QString/QWidget；或 Debug 构建一点插件就卡住后崩 `0xC0000374` | 插件与主程序 CRT 不一致——注意是「与宿主**逐配置一致**」而不是固定 /MD：固定 `MultiThreadedDLL` 在 Debug 里会与宿主 /MDd（`MSVCP140D`/`ucrtbased`）和 Qt debug DLL（`Qt6Cored`）各用各的堆，跨 DLL 传 `QString`/`QWidget` 直接堆损坏（Release 两边都是 /MD 所以长期没暴露） | `xtools_add_plugin` 里用 `MultiThreaded$<$<CONFIG:Debug>:Debug>DLL`（与 CMake 默认一致，Debug=/MDd、Release=/MD）；验证方法 `dumpbin /dependents` 看插件与 exe 的 CRT DLL 后缀（`D` 与否）是否相同 |
 | 高 DPI 下图标被裁或被放大到溢出 | 设了 `devicePixelRatio` 却按设备像素画 | 按**逻辑像素**坐标绘制，并给 1x/2x 两份 pixmap（见 `IconBadge`） |
 | 标题栏按钮只剩两个小点 | 继承了全局 `padding: 6px 14px` | 小按钮显式 `padding: 0; min-height: 0;` |
@@ -1426,6 +1533,11 @@ add_subdirectory(plugins/mytool)
 | macOS 包在用户的旧系统上双击没反应，`Info.plist` 却写着 12.0 | 没设 `CMAKE_OSX_DEPLOYMENT_TARGET`，clang 按构建机系统版本当部署目标（runner 是 15/26 就要求 15/26） | 在 `project()` **之前**设 `CMAKE_OSX_DEPLOYMENT_TARGET`；`package-macos.sh` 会打印 `MINOS=`/`PLIST_MIN=` 并在不一致时告警 |
 | macOS 任务报 `line 1: ./scripts/build.sh: Permission denied` | 仓库在 Windows 上开发（`core.fileMode=false`），`.sh` 以 `100644` 提交，runner 上就没有可执行位 | 两处都做：`git update-index --chmod=+x scripts/*.sh` 补权限位；CI 里统一用 `bash scripts/x.sh`，不依赖权限位 |
 | 打包报 `file SIZE requested of path that is not readable: …/QtSvg.framework/Resources` | macOS framework 内部全是符号链接（`Resources` → `Versions/Current/Resources`），`IS_DIRECTORY` 会跟随链接，把链接当目录去算体积就硬失败 | `_xtools_prune` 里先判 `IS_SYMLINK` 跳过：链接不占体积，删的时候跟着父目录走 |
+| 对一张校验不过的文件跑签名脚本，却打印 `[sign] verified` | `signtool verify /pa /q` 仍把 File/Index/Timestamp 表格打到 stdout，函数把这串输出一并返回，`if (Test-Signature …)` 拿到的是非空数组（恒为真） | 调用处写 `$null = & signtool verify …`，只用 `$LASTEXITCODE` 判断（见 `sign-windows.ps1` 的 `Test-Signature`） |
+| 签完名再打包，zip 里 / 用户装上的 exe 仍没有签名 | 顺序被打乱：签名会改写 PE 头，事后签只改了 `dist\windows-x64` 里那一份 | `package.bat` 的签名必须在 prune 之后、`Compress-Archive` 之前；安装器在 ISCC 之后单独签一次 |
+| macOS 公证通过，用户第一次打开仍被 Gatekeeper 拦 | 只提交了公证没有 `stapler staple`：票据留在 Apple 服务端，离线首启查不到 | 对 `.app` 与 `.dmg` 各 staple 一次（`package-macos.sh` 已做），`xcrun stapler validate` 可复查 |
+| `codesign` 报 `a sealed resource is missing or invalid` / `code object is not signed at all` | 用了 `--deep`，或先签容器后签内部文件：容器封条算完又被改写 | 由内向外签（`sign_bundle`）：Mach-O → 主程序 → `.app` → `.dmg`，签名时不要 `--deep` |
+| CI 上 `codesign` 卡在 `User interaction is not allowed` | 私钥没授权给 codesign：缺 `set-key-partition-list`，或钥匙串不在搜索列表里 | 导入后 `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <pwd> <keychain>`，并把钥匙串加进 `security list-keychains -d user -s` |
 
 ---
 
@@ -1438,6 +1550,8 @@ add_subdirectory(plugins/mytool)
 5. 改动涉及打包 / 更新：本地跑一遍 `scripts\package.bat`，确认 `dist\` 下的产物名与体积基线相符
    （见「裁剪清单与取舍」），并用 `XTOOLS_UPDATE_FEED` 指向本地假清单验一遍
    `--check-update`；改过资产名就先确认 `gen-release-manifest.py` 能把它归到正确的 `kind`。
+   改动涉及签名：确认「没配证书只告警 / 配了但失败必须中断」这条语义没被改掉，本地用自签证书
+   跑一遍签名步骤（看到 `[sign] done`），测完删掉证书与临时产物。
 6. 同步文档（规则 6）：改架构、构建、约定、平台能力 → 改本文件；改用法、支持工具、环境要求 → 改 `README.md`；
    改插件接口 → 改 `docs/PLUGIN.md` 并升 `XTOOLS_API_VERSION`。
 7. 编码自查（规则 5 的三条命令），应无输出。

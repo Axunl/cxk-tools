@@ -165,6 +165,19 @@ void MyToolPlugin::setToolInput(const xtools::ToolInput &input)
   `CMakeLists.txt` 里加 `target_link_libraries(mytool PRIVATE Qt6::Network)`
   （参考 `plugins/ipquery` 与 `plugins/translate`）。翻译这类依赖第三方服务的工具还要在
   README 里写清「需要联网」「文本会发给谁」「失败时怎么降级」，不能静默失败。
+- **额外 Qt 模块要自己链、自己部署**：除 `Qt6::Network`，还有更隐蔽的一类——某个模块必须先在
+  **顶层** `find_package(Qt6 … COMPONENTS …)` 里声明（否则子目录里根本没有那个 imported target），
+  并且 Windows 上要自己把模块 dll 拷到 `bin/`：主程序构建后的 `windeployqt` 只按 exe 的导入表
+  取依赖，看不到插件的。漏拷的表现是**插件加载失败、工具从首页静默消失**，只有 `app.log` 里一条
+  warning。完整范式见 `plugins/jsrun`：根 `CMakeLists.txt` 加 `Qml` 组件、插件里
+  `target_link_libraries(... Qt6::Qml)` + `POST_BUILD` 拷 `$<TARGET_FILE:Qt6::Qml>` +
+  `install(FILES …)`，再由 `scripts/package.bat` 校验 staging 里确实有 `Qt6Qml.dll`。
+- **要跑 JS 就用 `QJSEngine`，但注意三条**：① 引擎只能在**创建它的线程**里用（可用 `QThread`
+  把脚本挪到后台，`run()` 里栈上建引擎）；② 跨线程唯一安全的调用是 `setInterrupted()`（Qt 文档
+  明确它线程安全，就是为打断死循环设计的）；③ `newQObject()` 默认把对象所有权交给 JS，绑定栈对象
+  时必须 `QJSEngine::setObjectOwnership(obj, CppOwnership)`，否则引擎析构时会 delete 你的栈对象。
+  另外实测 Qt 6.8.3 的 V4 **没有 `globalThis`**，往全局挂东西要用
+  `engine.globalObject().setProperty(...)`（见 `plugins/jsrun/JsEngineRunner.cpp`）。
 - **不要自己弹独立窗口**：宿主已经提供「独立窗口」（页头按钮 / 标题栏双击 / 磁贴右键），
   插件再弹自己的顶层窗口会出现两套窗口语义；普通对话框（文件选择等）不在此列。
 - **面板可能被宿主搬去另一个顶层窗口**：点页头「独立窗口」或双击标题栏时，宿主直接把现有
@@ -185,7 +198,7 @@ void MyToolPlugin::setToolInput(const xtools::ToolInput &input)
 - 界面上：设置页「已加载 N 个插件，失败 M 个」下方会逐条列出失败原因
 
 想把求值、解析这类纯逻辑单独验证，别把它埋在 `.cpp` 的匿名命名空间里 ——
-抽成一个 header（参考 `plugins/calc/ExprEval.h`、`plugins/jsonfmt/JsonText.h`），
+抽成一个 header（参考 `src/api/ExprEval.h`、`plugins/jsonfmt/JsonText.h`），
 再用一个临时 CMake 工程 include 它做断言测试，测完把临时工程删掉即可。
 
 面板类本身也可以放头文件（参考 `plugins/jsonfmt/JsonFmtPanel.h`）：临时工程把它和

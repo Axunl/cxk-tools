@@ -27,11 +27,17 @@
 | Windows 10 / 11 | `cxk-tools-<版本>-windows-x64.zip` | 便携版：解压即用、不写注册表；升级是下载新包覆盖 |
 | macOS 12+（Apple Silicon） | `cxk-tools-<版本>-macos-arm64.dmg` | 打开后把 `cxk-tools.app` 拖进「应用程序」 |
 
-安装包**没有代码签名**，所以系统会先拦一下：
+正式发布的包带代码签名：Windows 安装器与主程序走 Authenticode，macOS 的 `.app` 与 `.dmg`
+走 Developer ID 签名并做了 Apple 公证（构建侧的证书一配好就自动生效，见
+[代码签名与公证](#代码签名与公证)）。所以不会再有「未知发布者」或「已损坏，无法打开」：
 
-- Windows：SmartScreen 提示「Windows 已保护你的电脑」→ 点「更多信息」→「仍要运行」；
-- macOS：首次打开被拦时右键（或按住 Control 点）图标 →「打开」，或执行
+- Windows：SmartScreen 一般直接放行。签名信誉要积累，刚换证书的头几个版本偶尔还会提示
+  「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」即可；
+- macOS：双击直接打开。万一被拦，右键（或按住 Control 点）图标 →「打开」，或执行
   `xattr -dr com.apple.quarantine "/Applications/cxk-tools.app"`。
+
+自己从源码编的包默认不签名（详见[打包与安装器](#打包与安装器)里的「代码签名与公证」），
+遇到拦截按上面 macOS 那条的办法处理即可。
 
 Linux 暂无预编译包，按下面的「构建」自己编。卸载：Windows 在「设置 → 应用」里卸载
 （用户配置与自己装的插件会保留，想清干净再手动删 `%LOCALAPPDATA%\cxk\cxk-tools`）；
@@ -81,7 +87,7 @@ macOS 把 `.app` 拖进废纸篓。
 | 工具 | 能力 |
 | --- | --- |
 | JSON 格式化 | **只有一个编辑框**：格式化 / 压缩 / 转义 / 反转义都在**框内原地改写**（走替换而不是重填，`Ctrl+Z` 能一步步撤回，光标跟着内容走），「复制」复制框里的全部内容；语法高亮（键/字符串/数字/字面量分色，残缺字符串标红）与键名补全（`Ctrl+空格` 主动唤起）；**粘贴即格式化**，手动输入自动缩进（回车按结构缩进、行首闭括号自动退格）；行号栏 + 代码折叠（点行号旁的 `⌄` 折叠一段，点 `⋯ N 行` 展开）；解析失败标红出错行并给出行列位置 |
-| 计算器 | 递归下降求值，支持 `+ - * / % ^ ()` 与 `pi`/`e`，边输边算，回车存历史 |
+| 计算器 | 递归下降求值，支持 `+ - * / % ^ ()` 与 `pi`/`e`，边输边算，回车存历史；在首页搜索框里输入同一串算式也会**就地出结果**，不用打开它 |
 | IP 地址查询 | 列出本机各网卡 IPv4（含网卡名）与公网 IP（含归属地）；点击条目或按 `Alt+数字` 复制到剪贴板。本机地址纯本地查询；公网地址联网查询，两个数据源自动降级，失败会显示具体原因 |
 | 进程监控 | 每 2 秒刷新系统内存与进程表，列出**进程 / PID / CPU / 内存 / 磁盘 / 网络 / 端口**（点表头换排序列，默认按内存从大到小），可按进程名、PID、**端口**过滤（输 `8080` 直接找出占用该端口的进程）；右键可**结束进程**、**重启进程**（结束前读下它原本的命令行与工作目录，用同样的参数重新拉起）、**打开文件所在位置**，也能单独释放某个进程的内存。**一键释放**回收 64 MB 以上、最多 40 个进程的工作集；「自动释放」默认开启，内存占用超过设定阈值（默认 80%）时自动回收占用最大的几个，两次之间至少隔 30 秒。网络列固定显示 `—`（见下方说明），整机上下行速率在概览卡里。回收内存仅 Windows 可用，macOS / Linux 只读；按进程的磁盘 I/O macOS 也没有 |
 | 文件占用释放 | 输入 / 拖入多个文件或文件夹，列出占用它们的程序（程序名、PID、类型、状态）；勾选后「解除占用」关闭其他进程持有的文件句柄（进程不退出），或「强制结束」直接结束进程，两步都有二次确认。「递归查询」控制文件夹是否包含子目录，一次最多检测 512 个文件 |
@@ -102,6 +108,8 @@ macOS 把 `.app` 拖进废纸篓。
 | 金融行情 | 四个分组：**自选 / 黄金 / 基金 / 股票**。黄金（上海金交所黄金9999、沪金主连、COMEX 黄金 / 白银）、股票与指数（上证 / 深证 / 创业板 / 沪深300 / 个股）、场外基金（每日净值 + 盘中估值）；**涨红跌绿**、数值右对齐，点任意一行把「名称 最新价 涨跌幅」复制到剪贴板，每 20 秒自动刷新、`F5` 手动刷新。**自选可增删**：输入代码或名称（`600519`、`000001`、`黄金`）回车搜索，点候选即加入，点行尾 `✕` 移除，选择存在本机、重启仍在。**需要联网**，数据来自东方财富公开接口，仅供看盘，不构成投资建议，见[金融行情](#金融行情) |
 | 今日热搜 | 看各平台今天的榜单：**微博 / 百度 / 知乎 / 抖音 / B 站 / 今日头条 / 36 氪 / 少数派 / 掘金** 9 个榜单一个下拉切换，进工具即自动拉最新一版。条目按排名列出（前三名分色）、标题、`热 / 新 / 沸 / 荐` 标签与热度值，**点任意一条直接在浏览器里打开**；`F5`（macOS 为 `⌘R`）或「刷新」重新拉，右下角「打开榜单网页」在接口取不到时兜底。**需要联网**，只读取公开榜单、不上传任何内容，见[今日热搜](#今日热搜) |
 
+| JS 代码运行 | 多行脚本编辑器 + 控制台，**完全离线**：`Ctrl+Enter` 在后台线程执行 JavaScript（纯净 QJSEngine，**没有文件 / 网络 / 剪贴板等宿主能力**），`console.log / info / warn / error` 实时出现在下方（对象按 JSON 缩进、循环引用不会卡死），结束后显示返回值、耗时与错误行号；**死循环超过 3 秒自动中断**；内置 6 段示例，最近 10 条成功片段可回填，上次脚本自动保存，见[JS 代码运行](#js-代码运行) |
+
 工具本身是插件：新增工具不需要改主程序，见[增加新插件](#增加新插件)。
 翻译工具的详细用法与边界见[翻译工具](#翻译工具)，WebSocket 调试见[WebSocket 调试](#websocket-调试)，
 局域网共享见[共享工具](#共享工具)，二维码见[二维码工具](#二维码工具)，
@@ -113,12 +121,16 @@ macOS 把 `.app` 拖进废纸篓。
 
 | 依赖 | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| Qt | 6.8.3 `msvc2022_64`（6.5+ 亦可） | 6.8+ `clang_64`（官方安装包） | 发行版包 `qt6-base-dev` |
+| Qt | 6.8.3 `msvc2022_64`（6.5+ 亦可），需含 **Qt Declarative（Qt QML）** 模块 | 6.8+ `clang_64`（官方安装包，含 Qt Declarative） | 发行版包 `qt6-base-dev` + `qt6-declarative-dev` |
 | 编译器 | MSVC 19.4x+（VS 2022 及以上） | Xcode Command Line Tools | GCC 9+ / Clang 10+ |
 | 构建工具 | CMake ≥ 3.21 + Ninja | 同左 | 同左（另需 `libx11-dev`、`libxcb1-dev`） |
 | 打安装包（可选，仅 Windows） | Inno Setup 6.7.x | — | — |
 | OCR 运行时（可选，非构建依赖） | 内置 PP-OCRv4 模型（随程序分发，离线）；模型缺失时回退系统自带 OCR 引擎 | 内置 PP-OCRv4 模型；缺失时回退 `tesseract-ocr`（识别中文另装 `chi_sim` 语言包） | 同 macOS |
 | 转 MP4（可选，仅屏幕录制用） | `ffmpeg` 在 `PATH` 里即可；未安装时「转 MP4」按钮不显示，录制本身照常可用 | 同 Windows | 同 Windows |
+
+> Qt Declarative 是**构建期硬依赖**（`jsrun` 插件用它自带的 `QJSEngine` 跑 JavaScript）。
+> 官方在线安装器默认装上了，自己勾选组件时别漏；缺了会在 configure 阶段直接报
+> `Qt6QmlConfig.cmake not found`。Windows 发布包里多一个 `Qt6Qml.dll`（约 5 MB）。
 
 ## 构建
 
@@ -232,11 +244,53 @@ macOS：
 
 ```sh
 scripts/build.sh Release
-scripts/package-macos.sh     # 拼 .app → macdeployqt → 剪裁 → ad-hoc 签名 → dist/*.dmg
+scripts/package-macos.sh   # 拼 .app → macdeployqt → 剪裁 → 签名 → 公证 → dist/*.dmg
 ```
+
+没配签名身份时脚本自动退回 ad-hoc 签名（Apple Silicon 上不签就根本起不来），产物照样能出。
 
 Linux 没有预编译包：把可执行文件与 `plugins/` 放同一目录即可，Qt 运行库按发行版方式分发
 （需要时可用 `linuxdeploy` / `appimagetool` 进一步打包）。
+
+### 代码签名与公证
+
+打包脚本**只在配了证书时才签名**，没配就退回原来的未签名产物 —— 本地开发不需要自备证书，
+CI 上由仓库 secret 提供。用到的环境变量：
+
+| 平台 | 变量 | 作用 |
+| --- | --- | --- |
+| Windows | `XTOOLS_SIGN_PFX` 或 `XTOOLS_SIGN_PFX_BASE64` + `XTOOLS_SIGN_PFX_PASSWORD` | Authenticode 签名 `cxk-tools.exe`、`plugins\*.dll` 与 `setup.exe` |
+| Windows | `XTOOLS_SIGN_THUMBPRINT` | 证书已装进「当前用户」证书库（EV 硬件令牌）时，直接按指纹签 |
+| macOS | `XTOOLS_MACOS_SIGN_IDENTITY` | `Developer ID Application: 名字 (TEAMID)`，启用真签名 + 硬化运行时 |
+| macOS | `XTOOLS_NOTARY_PROFILE`，或 `XTOOLS_APPLE_ID` + `XTOOLS_APPLE_APP_PASSWORD` + `XTOOLS_APPLE_TEAM_ID` | notarytool 公证，并把票据装订进 `.app` / `.dmg` |
+| 两端 | `XTOOLS_REQUIRE_SIGNING=1` / `XTOOLS_REQUIRE_NOTARIZATION=1` | 没配证书就直接失败（CI 用，防止悄悄发出未签名的包） |
+
+本机出签名包（证书已在钥匙串 / 有 PFX 文件）：
+
+```sh
+# macOS：先把公证凭据存进钥匙串，之后只引用 profile 名
+xcrun notarytool store-credentials cxk-notary --apple-id 你的邮箱 --password App专用密码 --team-id TEAMID
+security find-identity -v -p codesigning        # 确认身份名称
+XTOOLS_MACOS_SIGN_IDENTITY="Developer ID Application: 你的名字 (TEAMID)" \
+XTOOLS_NOTARY_PROFILE=cxk-notary scripts/package-macos.sh
+```
+
+```bat
+:: Windows
+set XTOOLS_SIGN_PFX=D:\cert\cxk-codesign.pfx
+set XTOOLS_SIGN_PFX_PASSWORD=你的密码
+scripts\package.bat
+```
+
+几条约定（改动前请先读）：
+
+- **顺序**：Windows 在压 zip **之前**签，因为签名会改写 PE 文件，事后签会让 zip 里的副本
+  仍是未签名的，也会让 `latest.json` 里的 SHA256 对不上；安装器另在 Inno 产出后再签一次。
+  macOS 由内向外签：框架/插件 → 主程序 → `.app` → `.dmg`，然后公证、装订。
+- **只签自己的二进制**：Qt / MSVC / onnxruntime 的 DLL 保留厂商原签名，不重签。
+- **卸载程序不签**：`unins000.exe` 是安装时由安装器生成的，不在签名范围里，卸载时的 UAC
+  仍显示「未知发布者」（安装过程本身不会）。
+- 私钥不进仓库：`.pfx` / `.p12` 与密码只从环境变量来，签完临时证书与临时文件都会被删掉。
 
 ## 发布一个版本（维护者）
 
@@ -249,7 +303,8 @@ Linux 没有预编译包：把可执行文件与 `plugins/` 放同一目录即�
    ```
 
 3. `.github/workflows/release.yml` 会自动：校验 tag 与 `CMakeLists.txt` 的版本一致 →
-   三平台构建 → 产出 zip / setup.exe / dmg → 生成 `latest.json` 与 `SHA256SUMS.txt` →
+   三平台构建 → 产出 zip / setup.exe / dmg（仓库里配了签名 secret 时会顺带签名与公证，见
+   [代码签名与公证](#代码签名与公证)）→ 生成 `latest.json` 与 `SHA256SUMS.txt` →
    创建 Release（说明取自上一版以来的提交）。
 
 tag 与源码里的版本不一致时工作流**直接失败**，不会替你把版本改掉。
@@ -288,6 +343,10 @@ cpp 里还有 `Q_OBJECT` 内部类时，文件末尾要 `#include "MyTool.moc"`�
   方向键 + 回车）。搜索框为空（刚呼出）时直接按数字就打开第 N 个；**已经在打字时数字仍照常
   输入**（`base64`、`360`、`7z` 不会被抢），这时按 `Ctrl+数字` 直选。序号超过结果数时按键
   回到搜索框，不会出现「按了没反应」的死键
+- **搜索框里就地算**：输入一道算式（`12*8`、`(12+8)*3^2`、`2*pi`），结果直接以「= 96」的小徽标
+  贴在搜索框右侧——不弹面板、不占网格、也不打断输入；`回车`或点一下徽标就把结果复制到剪贴板
+  （徽标会闪一下「已复制」）。只有「含数字 + 真有运算」才算，`3d`、`12`、`-5`、`json` 这类输入不会
+  冒出结果；用的是计算器面板同一份求值器，两边不会给出不同答案
 - **搜索建议（认内容）**：三种输入会在结果最上方顶出一条建议，回车即按建议执行、并把内容带进工具——
   ① 粘进一整段 JSON（`{...}` / `[...]`，能解析）→ 进「JSON 格式化」并自动排版；
   ② 按 `Ctrl+V` / `Shift+Insert` 粘进一张图片 → 进「OCR 文字识别」并立刻识别（不用再点按钮）；
@@ -299,7 +358,8 @@ cpp 里还有 `Q_OBJECT` 内部类时，文件末尾要 `#include "MyTool.moc"`�
   与全拼（`weixin`、`yinyue` → QQ 音乐）都认；
   右键可「在文件管理器中显示」。应用与工具共用「最近使用」，最多 8 条
 - **工具页**：页头有「← 首页」与「独立窗口」；面板不缓存，离开工具视图即销毁，
-  每次进入都是全新面板（输入值不留存）
+  每次进入都是全新面板（输入值不留存）——需要跨次保留的工具由插件自己落盘，
+  例如「JS 代码运行」会把上次脚本存进 `jsrun.ini`
 - **独立窗口**：每个工具最多一个，重复打开只把已有窗口前置；主窗口收起时它继续存在，
   退出程序时统一关闭。窗口位置/大小会被记住。点「独立窗口」或**双击标题栏**时，
   主窗口里那份面板会整块搬进独立窗口（内容、光标、撤销记录都在），主窗口回首页
@@ -601,6 +661,45 @@ TSV 近似，不是单元格识别）；识别质量取决于图片清晰度，�
 失败时状态行写明原因，不会静默留白。行情有几分钟到一天的延迟（基金净值按交易日收盘后更新），
 **仅供看盘参考，不构成任何投资建议**。
 
+## JS 代码运行
+
+在首页点「JS 代码运行」磁贴，或用 `--tool jsrun` 直接打开。上面写代码，下面看输出：
+`Ctrl+Enter`（或点「运行」）执行，日志流式出现，结束后显示返回值与耗时。
+**完全离线**，脚本跑在本机的一个独立 JS 引擎里，不上传任何内容。
+
+| 操作 | 说明 |
+| --- | --- |
+| 运行 | 点「运行」或按 `Ctrl+Enter`；普通回车仍然只是换行（这是多行编辑器） |
+| 控制台 | `console.log / debug / info` 正常色、`warn` 橙色、`error` 红色。多个参数用空格连接；对象与数组按 JSON 缩进显示，**循环引用会标成 `[循环引用]` 而不是把页面卡死** |
+| 返回值 | 脚本最后一行表达式的值会单独成块显示。`undefined` 显示「（无返回值）」，字符串原样，对象转 JSON |
+| 出错时 | 显示「第 N 行：错误类型：说明」，并附最多 6 帧调用栈；底部状态行同时给一行摘要 |
+| 超时 | 脚本跑超过 **3 秒**会被自动中断，状态行写「执行超时（>3 秒），已中断」，界面全程不卡、随时可以切走 |
+| 示例片段 | 左上「示例片段」下拉，6 段内置 demo：数组筛选/映射、对象与 JSON、正则抽取、时间格式化、造测试数据，以及一段**故意写的死循环**——点它就能亲手看到 3 秒中断 |
+| 最近运行 | 只有**成功运行**过的脚本才进历史（最多 10 条，最新的在最前），选中即回填编辑器；回填可用 `Ctrl+Z` 撤回 |
+| 上次脚本 | 编辑器内容随时自动保存，下次进工具接着上次写 |
+| 复制 / 清空 | 「复制输出」把日志与结果一起写进剪贴板；「清空输出」只清输出，不动编辑器 |
+
+**沙箱边界（这是本工具最重要的部分）**：脚本能用的只有 JavaScript 语言本身。引擎里
+**没有**文件读写、网络请求、剪贴板、进程操作，也没有 `require` / `import` / `fetch` /
+`XMLHttpRequest` / `setTimeout` / `setInterval`（没有事件循环；`Promise` 对象虽然在，
+但 `then` 永远不会被调用）。输出只有两条路：`console.*` 与最后一行表达式的返回值。
+
+语言能力以 ES2017 常用语法为准：`let/const`、箭头函数、模板字符串、展开、`Map`/`Set`、
+`WeakSet`、`JSON`、`Date`、正则都在。实测这颗引擎（Qt 6.8.3 的 V4）**没有 `globalThis`**，
+直接写 `globalThis.xxx` 会得到 `ReferenceError`；要在脚本内共享变量，直接 `var` / `let`
+声明即可（每次运行是一个全新的全局环境，不会跟上次串味）。
+
+**超时能挡住什么**：挡住的是 CPU 死循环（`while (true) {}`、无限递归）。它挡不住
+「单次原生调用跑很久」——例如 `"a".repeat(2e8)`、几十 MB 的 `JSON.parse`、正则的
+灾难性回溯：这些调用在引擎内部一次跑完，中断要等它回到字节码才会生效，可能明显超过
+3 秒。内存也没有上限（引擎不提供堆配额），`new Array(1e8)` 这种写法可能把程序拖垮。
+
+脚本长度上限 200 KB；单次运行最多显示 1000 条 console 输出、单条最长 4000 字符，
+超出会截断并标注（防止循环里打印把界面刷死）。`console.log` 不支持 `%s` 占位符替换，
+多参数就是空格拼接——想拼话术请用模板字符串。
+
+脚本与历史存在[运行时数据](#运行时数据)里的 `jsrun.ini`，删掉它即恢复默认示例。
+
 ## 命令行参数
 
 | 参数 | 作用 |
@@ -646,6 +745,8 @@ plugins/
   hotsearch/         今日热搜：9 个平台榜单切换、点击条目打开浏览器（联网）
   finance/           金融行情：自选 / 黄金 / 基金 / 股票报价，自选存本机 ini（联网）
   screenrec/         屏幕录制：全屏 / 框选录成 MJPEG AVI（自写封装），录制器跨页保活
+  jsrun/             JS 代码运行：多行编辑器 + console 控制台，后台线程执行、3 秒超时中断
+                     （用 Qt Qml 模块里的 QJSEngine；Windows 额外部署 Qt6Qml.dll）
 assets/              程序图标（app.ico / app.icns，由 IconBadge 的画法导出）
 installer/
   windows/           Inno Setup 脚本 + 中文语言文件
@@ -666,6 +767,7 @@ docs/PLUGIN.md       插件开发详解
 | 共享上传副本 | `QStandardPaths::AppLocalDataLocation` 下的 `share/uploads/`（Windows `%LOCALAPPDATA%\cxk\cxk-tools\share\uploads`）。网页端上传的文件存到这里并加入共享列表，从列表移除时连同副本一起删除 |
 | 表情包图片缓存 | `QStandardPaths::CacheLocation` 下的 `memes/`（Windows `%LOCALAPPDATA%\cxk\cxk-tools\cache\memes`；macOS `~/Library/Caches/cxk/cxk-tools/memes`；Linux `~/.cache/cxk/cxk-tools/memes`）。文件名是图片 URL 的 SHA-256，超过 300 个文件或 120 MB 时按最久未用自动清理；`outbox/` 子目录存「已复制到剪贴板」的那一份，不参与清理（剪贴板里存的是路径，粘之前被删掉就会静默失败）。整个目录可直接删 |
 | 金融行情自选 | `QStandardPaths::AppConfigLocation` 下的 `finance.ini`（与主配置同目录）。只保存「品种 id + 名字」的列表，删掉文件即恢复首次运行的示例自选；插件升级不会动它 |
+| JS 代码运行的脚本 | `QStandardPaths::AppConfigLocation` 下的 `jsrun.ini`（与主配置同目录）。存「上次编辑的脚本」与最近 10 条成功运行的片段，删掉即恢复默认示例 |
 | 更新下载的安装包 | 系统临时目录下的 `cxk-tools-update/`（校验失败会立刻删除，不长期保留） |
 | 开机自启 | Windows：`HKCU\...\Run`；Linux：`~/.config/autostart/cxk-tools.desktop`；macOS：未实现 |
 
@@ -693,7 +795,8 @@ docs/PLUGIN.md       插件开发详解
 | 局域网共享（共享插件） | 支持，Qt 起本地 HTTP 服务并监听 IPv4 | 支持；首次运行时系统可能询问是否允许传入连接，需允许 | 支持；同样只监听 IPv4，防火墙需放行该端口 |
 | 表情包（联网搜索） | 支持；复制动图时剪贴板里同时放首帧图片、文件地址与 GIF 原始字节（`CF_GIF`），微信 / QQ 一般能贴出动图 | 支持；剪贴板只放首帧图片 + 文件地址（macOS 没有通用的动图剪贴板类型），要动图请「另存为」后按文件发 | 同 macOS，另外多放一项 `image/gif` 数据，能否贴成动图看目标程序 |
 | 金融行情（联网报价） | 支持，HTTPS 走系统 Schannel | 支持，HTTPS 依赖 Qt 的 TLS 后端（一般需 OpenSSL），未实机验证 | 同 macOS，未实机验证 |
-| 安装包 | `setup.exe`（Inno Setup，未签名 → SmartScreen 提示） | `.dmg`（ad-hoc 签名、未公证 → 首次需右键打开） | 无预编译包 |
+| JS 代码运行（本地 JS 引擎） | 支持，引擎在随包分发的 `Qt6Qml.dll` 里 | 支持（`QtQml.framework` 随包），未实机验证 | 支持，需发行版 `qt6-declarative` 提供 `libQt6Qml`，未实机验证 |
+| 安装包 | `setup.exe`（Inno Setup）+ 便携 zip；配了证书则做 Authenticode 签名 | `.dmg`；配了证书则 Developer ID 签名 + 公证 + 装订票据 | 无预编译包 |
 | 应用内更新 | 安装版静默升级；便携版下载 zip 后自己覆盖 | 下载 dmg 后手动拖入「应用程序」 | 只提示打开发布页（没有可用的 Linux 包） |
 
 ## 已知边界
@@ -806,6 +909,16 @@ docs/PLUGIN.md       插件开发详解
   Qt WebSockets 模块）：Windows 已用本机 echo 服务、公网 `wss` 服务实测收发 / 分片 / ping-pong /
   关闭码，服务端另用一个独立实现的裸 socket 客户端验证过握手、掩码、分片与协议错误；
   macOS / Linux 未实机验证（代码里没有平台分支，全程只用 Qt Network）
+- JS 代码运行**只防 CPU 死循环**：3 秒超时靠 `QJSEngine::setInterrupted()`，它只在
+  字节码边界生效。`"a".repeat(2e8)`、几十 MB 的 `JSON.parse`、正则灾难性回溯这类
+  「单次原生调用跑很久」的写法，超时提示会照常出现，但真正停下来的时间可能明显晚于
+  3 秒；极端情况下执行线程迟迟不退出，程序会放弃等待并在日志里记一条
+- JS 代码运行**没有内存上限**：引擎不提供堆配额，`new Array(1e8)` 这类分配可能把宿主
+  一起拖垮。它也不是 Node / 浏览器——没有 `require`、模块 `import`、DOM、`fetch`、
+  定时器；`Promise` 对象存在但没有事件循环，`then` 永远不会执行；这颗引擎还没有
+  `globalThis`。`console.log` 不做 `%s` 占位符替换，多参数就是空格拼接
+- JS 代码运行在 macOS / Linux 上未实机验证（执行与线程代码没有平台分支，但 Qt6Qml 的
+  打包路径只在 Windows 上跑过）
 - 「最近使用」只记最近 8 个，启动与唤出不算「使用」，只有主动打开工具/应用才计入
 - 本机应用是**索引**而不是全盘扫描：只列开始菜单 / 应用程序目录 / `.desktop` 里的入口，
   启动时扫一次，新装的应用重启后才会出现；卸载后残留的记录会被自动跳过
@@ -860,8 +973,10 @@ docs/PLUGIN.md       插件开发详解
   拼进 SQL / 代码前请自行确认是否要转义
 - 今日热搜除百度外的 8 个平台走第三方聚合实例（DailyHotApi），不是官方接口：内容可能比官方
   晚几分钟，实例停服时只能点「打开榜单网页」自己去看；百度优先走官方 board 接口，失败才降级
-- 安装包**没有代码签名**：Windows 会弹 SmartScreen（「更多信息 → 仍要运行」），
-  macOS 会被 Gatekeeper 拦下（右键「打开」或去掉 quarantine 属性）。签名要自己的证书，CI 里没做
+- 签名是可选的，而且仓库里没有、也不该有私钥：只有配了证书的构建才签（CI 上由 secret 提供），
+  `scripts\package.bat` / `scripts/package-macos.sh` 在没配证书时照旧产出未签名包并给出明确警告。
+  另外卸载程序 `unins000.exe` 由安装器在安装时生成，不在签名范围内，卸载时的 UAC 仍会显示
+  「未知发布者」
 - 打 Windows 安装器需要 **Inno Setup 6.7.x**（已在 6.7.4 上实测编译通过）：
   `installer/windows/lang/ChineseSimplified.isl` 是 6.5.0+ 的翻译文件，换 7.x 编译会因消息表变动失败；
   没装则只能出便携 zip
@@ -878,8 +993,6 @@ docs/PLUGIN.md       插件开发详解
 
 ## 后续可以加什么
 
-- 搜索框里直接出结果（输入 `12*8` 就地显示 `96`），不用打开面板
 - 剪贴板历史、文件快速搜索
 - 快捷键直达某个工具 / 收藏（固定到网格顶部）
 - macOS 全局热键与开机自启
-- 代码签名与公证（Windows Authenticode / macOS notarytool），消掉安装时的系统警告
