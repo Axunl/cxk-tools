@@ -119,6 +119,18 @@ UpdateDialog::UpdateDialog(UpdateChecker *checker, Settings *settings, QWidget *
             }
         });
 
+        // 断流自动重连：进度条停在原处不动最容易被当成"卡死"，
+        // 这里必须把"正在第几次重试、为什么断"说出来。
+        connect(m_checker, &UpdateChecker::downloadRetrying, this,
+                [this](int attempt, int maxAttempts, const QString &reason) {
+                    if (!m_downloading)
+                        return;
+                    setStatus(QStringLiteral("连接中断（%1），正在自动重试 %2/%3，已下载的部分会续传…")
+                                  .arg(reason)
+                                  .arg(attempt)
+                                  .arg(maxAttempts));
+                });
+
         connect(m_checker, &UpdateChecker::downloadReady, this,
                 [this](const QString &path, const update::Asset &asset) {
                     m_downloading = false;
@@ -151,7 +163,10 @@ UpdateDialog::UpdateDialog(UpdateChecker *checker, Settings *settings, QWidget *
             m_progress->hide();
             m_progress->setRange(0, 100);
             updateButtons();
-            setStatus(message, true);
+            // 更新失败最常见的成因是"下不动"（见 UpdateChecker 里关于超时与续传的注释），
+            // 所以除了原因，还要给一条用户能自己走通的路：浏览器下载不受这套超时管。
+            setStatus(message + QStringLiteral("。可以再点一次重试，或点「打开发布页」用浏览器下载"),
+                      true);
         });
     }
 }

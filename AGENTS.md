@@ -590,6 +590,25 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 - 装完的包才有升级能力（`isInstalledBuild()` 判断同目录有无 `unins000.exe`）；便携版退化成
   「打开发布页」让用户自己换。
 
+**下载链路的四条硬约束**（2026-11 修「更新老是失败」时定下的，别拆）：
+
+1. **必须跟随系统代理**。`UpdateChecker` 构造时对**自己这个** `QNetworkAccessManager` 调
+   `systemProxyForQuery()`，不要改成全局 `QNetworkProxyFactory::setUseSystemConfiguration(true)`
+   ——那会顺带改掉所有插件的网络行为。反例就是这次的真实故障：用户开着 `127.0.0.1:7890`
+   的代理，浏览器能开 GitHub，程序直连，于是每次下载都卡死；日志里表现为
+   `下载失败：Operation canceled`，看不出跟代理有关。
+2. **Qt 的传输超时 = `OperationCanceledError` + `"Operation canceled"`**。这个字符串绝不能直接给用户
+   （`describeNetworkError()` 必须逐码翻成中文），否则"网络卡住了"会显示成一句谁也看不懂的英文。
+   注意 `setTransferTimeout` 是**空闲**口径（多久没新数据才掐），不是总时长；实测 1 秒超时拦不住
+   一个数据一直在流、总时长 3.5 秒的下载。
+3. **断点续传优先于重下**：安装包先写 `xxx.part`，断流就带 `Range` 续传（最多 5 次），校验通过才改名。
+   服务器不认 Range 会回 `200` + 整包，此时必须 `resize(0)` + 重置 hash，否则拼出来的是
+   "前段旧、后段新"的坏包，SHA256 永远不过。
+4. **写盘失败与网络失败要分开**：写盘失败会 `abort()`，错误码被掩盖成 `Operation canceled`，
+   所以用 `m_localError` 单独记账并优先上报；写失败的 `.part` 不能留（磁盘上的字节和 hash 已经不一致）。
+
+同一个坑在 `plugins/` 里联网的插件上同样存在，改网络代码时一并检查。
+
 ## 界面验证（改 ui/ 或 qss 必做）
 
 ```sh
@@ -1514,6 +1533,7 @@ add_subdirectory(plugins/mytool)
 | 设了某个热键后，别的程序里同名快捷键全失效（如 `Ctrl+A` 不能全选） | `RegisterHotKey` 是系统级独占，单修饰键 + 字母这种「常见编辑快捷键」被抢走就全局生效 | 这不是 bug 是全局热键的固有语义：默认值只给 `Ctrl+Alt+Space`，交付时提醒用户别拿单修饰键 + 字母当热键 |
 | 日志写「已注册 Alt+Space」，物理按键却毫无反应；同一台机器上 `SendInput` 合成同一个组合却能唤起 | 按键要先过 `WH_KEYBOARD_LL` 钩子链才进热键匹配，链上某个常驻程序（实测机器上同时跑着 ToDesk / Snipaste / Ditto）把真实按键吃掉，而这类钩子普遍放过 `LLKHF_INJECTED` 事件，所以注入能过、物理按不过 —— 于是「注册成功」和「按键到得了」被解耦了 | Windows 侧再挂一个自己的 `WH_KEYBOARD_LL` 兜底（`installKeyboardHook()`），命中后延迟 150ms，若这期间 `WM_HOTKEY` 到了就不管（防重复唤起）。排查时先搜日志「由键盘钩子兜底唤起」：出现了说明系统热键链路被别家拦了，没出现才是我们自己的问题 |
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
+| 点「下载并安装」每次都失败，状态栏只有 `下载失败：Operation canceled` | ① Qt 把传输超时统一报成 `OperationCanceledError`，`errorString` 就是这句英文，用户完全看不出是网络问题；② 更新请求没读系统代理，用户开着 `127.0.0.1:7890` 的代理、浏览器能开 GitHub，程序却直连 | 错误码逐条翻中文（`UpdateChecker::describeNetworkError`）+ 更新专用的 manager 套 `systemProxyForQuery()`；断流改 `Range` 断点续传。四条硬约束见「更新链路」 |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 | `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |
 | 改完插件链接报 `LNK1104`「无法打开 …\plugins\xxx.dll」 | 上一次 `--shot` 或手动启动的 cxk-tools 还在后台跑着，DLL 被占用（先 `taskkill` 再删 DLL 会"成功"，但链接仍然写不进去） | 构建前 `tasklist \| findstr cxk-tools` 确认没有残留进程，有就结束掉；不要靠删 build 目录绕 |

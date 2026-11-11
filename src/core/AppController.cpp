@@ -49,8 +49,10 @@ int AppController::runHeadlessCheck()
 
     checker.check();
 
-    // 兜底超时：transferTimeout 之外再兜一层，保证脚本调用不会挂住
-    QTimer::singleShot(25000, &loop, &QEventLoop::quit);
+    // 兜底超时：transferTimeout 之外再兜一层，保证脚本调用不会挂住。
+    // 要盖住"清单请求重试一次"的最坏情况（2 × 12s 超时 + 退避），否则重试还没回来
+    // 进程就退了，脚本会误判成"更新失败"。
+    QTimer::singleShot(32000, &loop, &QEventLoop::quit);
     loop.exec();
     return code;
 }
