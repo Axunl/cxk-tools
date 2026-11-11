@@ -76,6 +76,9 @@ enum class Color
     WarnText,           ///< 警告文字（深）
     WarnStrong,         ///< 警告（连接中、危险但可用）
     Teal,               ///< Cron 可视化编辑器的选中色
+    QuoteUp,            ///< 行情上涨（A 股惯例：涨红跌绿，与欧美相反）
+    QuoteDown,          ///< 行情下跌
+    QuoteFlat,          ///< 行情持平 / 无数据
     Scrollbar,          ///< 滚动条滑块
     ScrollbarHover,     ///< 滚动条滑块悬停
     TooltipBg,          ///< 气泡底色（与主表面相反）
@@ -163,6 +166,11 @@ inline const QVector<Entry> &table()
         {Color::WarnText, "warn-text", "#B45309", "#FBBF24"},
         {Color::WarnStrong, "warn-strong", "#D97706", "#FBBF24"},
         {Color::Teal, "teal", "#0F766E", "#0F766E"},
+        // 行情涨跌色单独挑，不复用 danger/success：那两套是「错误/成功」的语义色，
+        // 深色主题下 success 偏青绿、danger 偏橙红，放在满屏数字里会显得发灰。
+        {Color::QuoteUp, "quote-up", "#D92B2B", "#FF7A7A"},
+        {Color::QuoteDown, "quote-down", "#12915C", "#4ADE80"},
+        {Color::QuoteFlat, "quote-flat", "#64748B", "#8A94A3"},
         {Color::Scrollbar, "scrollbar", "#CBD5E1", "#3C434F"},
         {Color::ScrollbarHover, "scrollbar-hover", "#A9B7C9", "#55606F"},
         {Color::TooltipBg, "tooltip-bg", "#0F172A", "#2C313A"},
