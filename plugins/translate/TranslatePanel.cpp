@@ -127,6 +127,13 @@ void TranslatePanel::setInputText(const QString &text)
     if (trimmed.isEmpty())
         return;
 
+    // 只有「主窗口推荐进来」才会走到这里（首页识别到一段英文后带内容进工具）；
+    // 用户主动点磁贴打开时不调本函数，面板保持构造时的默认目标语言「英语」。
+    // 推荐场景的语义是「把这段英文翻成中文」，所以进来先把目标语言切到中文。
+    const int chineseIndex = m_target->findText(QStringLiteral("中文"));
+    if (chineseIndex >= 0)
+        m_target->setCurrentIndex(chineseIndex);
+
     // setPlainText 会发 textChanged -> scheduleAutoTranslate（1100 ms 防抖）；
     // 这里直接 startTranslate()，进入工具就是「翻译中…」而不是等一秒才动。
     // startTranslate 内部会停掉防抖定时器，不会重复发请求。

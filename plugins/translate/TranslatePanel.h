@@ -44,8 +44,10 @@ public:
     explicit TranslatePanel(QWidget *parent = nullptr);
     ~TranslatePanel() override;
 
-    /// 宿主把首页搜索框里的英文带进来时调用：填进输入框并立刻翻译。
-    /// 空文本直接忽略（不会触发请求）。
+    /// 宿主把首页搜索框里的英文带进来时调用：先把目标语言切到中文再填进输入框并
+    /// 立刻翻译（推荐进来的语义是「把这段英文翻成中文」）。空文本直接忽略。
+    /// 注意：用户主动点磁贴打开不会调用本函数，那时面板保持默认目标语言「英语」，
+    /// 因此「推荐进来 → 译中文、主动进来 → 译英文」两种默认值靠是否有本次调用来区分。
     void setInputText(const QString &text);
 
 protected:
