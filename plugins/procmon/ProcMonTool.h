@@ -1,14 +1,14 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// 内存监控插件的入口类。只负责元信息与创建面板，界面逻辑全在 MemMonPanel。
+// 进程监控插件的入口类。只负责元信息与创建面板，界面逻辑全在 ProcMonPanel。
 // ---------------------------------------------------------------------------
 
 #include "ITool.h"
 
 #include <QObject>
 
-class MemMonPlugin : public QObject, public xtools::ITool
+class ProcMonPlugin : public QObject, public xtools::ITool
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID XTOOLS_ITOOL_IID)   // 三行缺一不可

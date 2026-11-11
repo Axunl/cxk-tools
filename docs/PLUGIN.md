@@ -154,7 +154,7 @@ void MyToolPlugin::setToolInput(const xtools::ToolInput &input)
   但 **`QComboBox` 例外**：全局 qss 为消掉原生 `::drop-down` 甩到圆角框外的边框写了规则，
   Qt 因此不再画下拉三角。每个用到 `QComboBox` 的面板都要自己补一个自绘箭头子控件
   （`WA_TransparentForMouseEvents`），并在 `eventFilter` 里跟着 Resize 摆到右侧 18px 区域
-  （参考 `MemMonPanel.cpp` / `TranslatePanel.cpp` 的 `ComboArrow`）；否则用户看不出那是可展开的
+  （参考 `ProcMonPanel.cpp` / `TranslatePanel.cpp` 的 `ComboArrow`）；否则用户看不出那是可展开的
   下拉框，会以为面板里根本没有可选项。
 - **弹窗类浮层**（补全候选、日期选择等）要自己给 popup 设 `objectName`：这类控件是顶层窗口，
   全局 qss 只能按 `QAbstractItemView#<objectName>` 命中，不设就是系统默认外观

@@ -4,7 +4,7 @@
 // 文件占用释放：纯逻辑层。
 //
 // 只做「路径文本 → 目标集合 → 匹配判定 → 结果归并」四件事，只依赖 Qt Core，
-// 不 include 任何平台头、不碰 QWidget。理由同 MemText.h / JsonText.h：
+// 不 include 任何平台头、不碰 QWidget。理由同 ProcText.h / JsonText.h：
 // 路径归一化（尤其 GetFinalPathNameByHandle 给的 \\?\ 前缀、Windows 大小写）
 // 最容易写错，抽成 header 后可以在临时工程里直接 include 断言，不必真的去占文件。
 //

@@ -61,7 +61,7 @@ inline QString idleHint()
 /// 下拉框右侧的小三角，自绘原因是全局 qss 的硬性约定：
 /// 为了消掉原生 `QComboBox::drop-down` 在圆角外框上甩出的深色 L 形边框，
 /// style.qss 给这个子控件写了规则，副作用是 Qt 连默认箭头也不画了。
-/// 内存监控面板用同样的自绘子控件补回箭头（见 MemMonPanel.cpp），翻译面板有
+/// 进程监控面板用同样的自绘子控件补回箭头（见 ProcMonPanel.cpp），翻译面板有
 /// 源语言 / 目标语言 / 引擎三个下拉框，漏补时「自动（推荐）」看起来只是一行
 /// 普通文字，用户根本不知道能展开选服务。位置由 TranslatePanel::eventFilter
 /// 在 Resize / Show 时贴合到 qss 留出的右侧 18px 箭头区。

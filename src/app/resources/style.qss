@@ -333,7 +333,7 @@ QPushButton:pressed {
     background: @bg-pressed;
 }
 
-/* 置灰态：默认的 disabled 外观在浅色主题上几乎看不出区别（内存监控的「释放选中」
+/* 置灰态：默认的 disabled 外观在浅色主题上几乎看不出区别（进程监控的「释放选中」
    在没选中行时靠它表示不可点） */
 QPushButton:disabled {
     background: @bg-alt;
@@ -409,7 +409,7 @@ QCheckBox {
 
 /* 下拉框：::drop-down 必须写 —— 不写的话 Qt 用原生样式画这个子控件，在圆角外框 +
    padding 下会把它的边框甩到圆角框外面，形成一条突兀的深色 L 形线。写了之后 Qt
-   也不再画默认小三角，箭头改由面板自绘（见 MemMonPanel.cpp 的 ComboArrow）。
+   也不再画默认小三角，箭头改由面板自绘（见 ProcMonPanel.cpp 的 ComboArrow）。
    别在 qss 里给子控件配 image/background-image：image 会被当成当前项图标重复画到
    文字后面，background-image 则整片平铺，两种都试过、都不对。 */
 QComboBox {
@@ -542,94 +542,100 @@ QToolTip {
     padding: 4px 8px;
 }
 
-/* ---------------------------------------------------------------- 内存监控 */
+/* ---------------------------------------------------------------- 进程监控 */
 /* 概览卡：白底 + 细边框，与设置页的 QGroupBox 同一套观感 */
-#memCard {
+#procCard {
     background: @bg;
     border: 1px solid @border;
     border-radius: 10px;
 }
 
-#memCaption {
+#procCaption {
     font-size: 11px;
     color: @text-faint;
 }
 
-#memPercent {
+#procPercent {
     font-size: 30px;
     font-weight: 600;
     color: @text;
 }
 
-/* 占用越高越刺眼：80% 起橙色、90% 起红色（阈值见 MemText.h 的 levelFor） */
-#memPercent[level="warn"] {
+/* 占用越高越刺眼：80% 起橙色、90% 起红色（阈值见 ProcText.h 的 levelFor） */
+#procPercent[level="warn"] {
     color: @warn-text;
 }
 
-#memPercent[level="danger"] {
+#procPercent[level="danger"] {
     color: @danger;
 }
 
-#memUsed {
+#procUsed {
     font-size: 13px;
     color: @text-body;
 }
 
-#memAvail {
+#procAvail {
     font-size: 13px;
     font-weight: 600;
     color: @text;
 }
 
-#memReleased {
+/* 网络速率：比「可用」低一级，它是辅助信息不是主指标 */
+#procNet {
     font-size: 11px;
     color: @text-faint;
 }
 
-QProgressBar#memBar {
+#procReleased {
+    font-size: 11px;
+    color: @text-faint;
+}
+
+QProgressBar#procBar {
     background: @bg-track;
     border: none;
     border-radius: 3px;
 }
 
-QProgressBar#memBar::chunk {
+QProgressBar#procBar::chunk {
     background: @accent;
     border-radius: 3px;
 }
 
-QProgressBar#memBar[level="warn"]::chunk {
+QProgressBar#procBar[level="warn"]::chunk {
     background: @warn;
 }
 
-QProgressBar#memBar[level="danger"]::chunk {
+QProgressBar#procBar[level="danger"]::chunk {
     background: @danger-strong;
 }
 
-QLineEdit#memSearch {
+QLineEdit#procSearch {
     padding: 7px 10px;
 }
 
 /* 进程表。注意只给 ::item 加左右 padding —— 给 view 本身加 padding 会把 viewport
    撑得比内容还小，明明没几行也会常驻滚动条（补全弹窗踩过同一个坑）。 */
-QTreeWidget#memTable {
+QTreeWidget#procTable {
     background: @bg;
     border: 1px solid @border;
     border-radius: 10px;
     outline: none;
 }
 
-QTreeWidget#memTable::item {
+QTreeWidget#procTable::item {
     padding: 0px 10px;
     color: @text-body;
     border-bottom: 1px solid @bg-subtle;
 }
 
-QTreeWidget#memTable::item:selected {
+QTreeWidget#procTable::item:selected {
     background: @accent-soft;
     color: @accent-text;
 }
 
-QTreeWidget#memTable QHeaderView::section {
+QTreeWidget#procTable QHeaderView::section {
     background: @bg-alt;
     color: @text-muted;
     font-size: 12px;
@@ -639,16 +645,16 @@ QTreeWidget#memTable QHeaderView::section {
     padding: 0px 10px;
 }
 
-#memStatus {
+#procStatus {
     font-size: 12px;
     color: @text-muted;
 }
 
-#memStatus[state="warn"] {
+#procStatus[state="warn"] {
     color: @danger;
 }
 
-#memHint {
+#procHint {
     font-size: 11px;
     color: @text-faint;
 }
@@ -804,7 +810,7 @@ QPushButton#flRowAction:hover {
     font-size: 12px;
 }
 
-/* 浏览菜单与内存监控的右键菜单共用：不写的话 Qt 给的是系统默认灰菜单，
+/* 浏览菜单与进程监控的右键菜单共用：不写的话 Qt 给的是系统默认灰菜单，
    和卡片式浅色界面完全不搭 */
 QMenu {
     background: @bg;
@@ -1071,7 +1077,7 @@ QPushButton#cronMiniBtn {
     font-size: 11px;
 }
 
-/* 运行时间列表：与内存监控的进程表同一套白底细边框观感。
+/* 运行时间列表：与进程监控的进程表同一套白底细边框观感。
    只给 ::item 加左右 padding，view 本身加 padding 会让 viewport 比内容小、
    5 行内容也常驻滚动条（json 补全弹窗踩过同一个坑）。 */
 QListWidget#cronNext {

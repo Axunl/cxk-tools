@@ -40,7 +40,7 @@
 namespace {
 
 /// 改动态属性后必须重新 polish，否则 qss 的 [state="..."] / [hovered="true"]
-/// 不会立刻生效（与 MemMonPanel 同一套做法）。
+/// 不会立刻生效（与 ProcMonPanel 同一套做法）。
 void repolish(QWidget *widget)
 {
     widget->style()->unpolish(widget);

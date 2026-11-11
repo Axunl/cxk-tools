@@ -1,23 +1,26 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// 内存监控面板（插件内部使用，不进 api/，宿主只认 ITool）。
+// 进程监控面板（插件内部使用，不进 api/，宿主只认 ITool）。
 //
 // 三块内容，从上到下：
-//   1. 概览卡：物理内存占用百分比 + 已用/总量 + 进度条 + 可用 + 本次已释放累计；
-//   2. 操作条：进程搜索、自动释放开关与阈值、释放选中 / 释放内存；
-//   3. 进程表：按工作集从大到小，右键可单独释放某个进程。
+//   1. 概览卡：物理内存占用百分比 + 已用/总量 + 进度条 + 可用 + 网络速率 + 本次已释放；
+//   2. 操作条：进程搜索（名字 / PID / 端口）、自动释放开关与阈值、释放选中 / 释放内存；
+//   3. 进程表：进程 / PID / CPU / 内存 / 磁盘 / 网络 / 端口，点表头可换排序列，
+//      右键可释放内存、结束、重启、打开文件所在目录。
 //
 // 面板**只在可见时**采样（showEvent 起定时器、hideEvent 停），否则藏在页栈里的
 // 面板也会 2 秒一次去扫进程表，白烧 CPU。
 //
-// 状态全部留在实例里（自动释放开关、已释放累计、阈值选择），没有静态变量：
+// 状态全部留在实例里（自动释放开关、已释放累计、阈值选择、排序列），没有静态变量：
 // 宿主允许同一工具同时存在「主窗口内嵌」与「独立窗口」两份面板，用全局状态会互相串。
 // ---------------------------------------------------------------------------
 
-#include "MemProbe.h"
+#include "ProcProbe.h"
+#include "ProcText.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QVector>
 #include <QWidget>
 
@@ -31,12 +34,12 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-class MemMonPanel : public QWidget
+class ProcMonPanel : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MemMonPanel(QWidget *parent = nullptr);
+    explicit ProcMonPanel(QWidget *parent = nullptr);
 
 protected:
     /// 面板可见才开始采样；顺带把焦点丢进搜索框（进插件就能直接筛进程）
@@ -49,17 +52,17 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    /// 采样一次（系统内存 + 进程表），刷新概览与列表
+    /// 采样一次（系统内存 + 网络 + 进程表 + 速率），刷新概览与列表
     void refresh();
 
-    /// 只按当前关键词与缓存重排列表（搜索框输入时用，不重新扫进程）
+    /// 只按当前关键词 / 排序列重排列表（搜索框输入、点表头时用，不重新扫进程）
     void rebuildTable();
 
     /// 整行重建：结构变了才走这里，会保下选中行与滚动位置
-    void rebuildTableFully(const QVector<memprobe::ProcessMemory> &rows);
+    void rebuildTableFully(const QVector<procprobe::ProcessInfo> &rows);
 
     /// 就地更新某一行的文字（行数与顺序都没变时走这里，避免每 2 秒闪一下）
-    void updateRow(QTreeWidgetItem *item, const memprobe::ProcessMemory &process);
+    void updateRow(QTreeWidgetItem *item, const procprobe::ProcessInfo &process);
 
     void updateSummary();
 
@@ -69,12 +72,20 @@ private:
     void releaseSelected();
     void releaseAll();
 
-    /// 定时器回调里判断"要不要自动释放"：低于阈值 + 冷却期已过才动手
+    /// 结束进程（带确认框）。@param restartAfter true 表示这是"重启"的第一步
+    bool killProcessWithConfirm(quint32 pid, const QString &name);
+    void restartProcess(quint32 pid, const QString &name);
+    void revealProcess(quint32 pid, const QString &name);
+
+    /// 定时器回调里判断"要不要自动释放"：占用超阈值 + 冷却期已过才动手
     void maybeAutoRelease();
 
     void updateSelectionState();
     quint32 selectedPid() const;
     void showContextMenu(const QPoint &pos);
+
+    /// 表头点击 → 换排序列 / 翻转升降序
+    void applySortColumn(int column);
 
     /// @param holdSecs > 0 表示这条消息先占住状态栏若干秒，别被下一次刷新覆盖
     void setStatus(const QString &text, bool warn, int holdSecs);
@@ -83,6 +94,7 @@ private:
     QLabel *m_percent = nullptr;
     QLabel *m_used = nullptr;
     QLabel *m_avail = nullptr;
+    QLabel *m_net = nullptr;
     QLabel *m_released = nullptr;
     QProgressBar *m_bar = nullptr;
 
@@ -98,12 +110,18 @@ private:
     QTimer *m_timer = nullptr;
 
     // ---- 数据与状态
-    memprobe::SystemMemory m_sys;
-    QVector<memprobe::ProcessMemory> m_processes;
+    procprobe::SystemMemory m_sys;
+    procprobe::SystemNet m_netCounters;
+    QVector<procprobe::ProcessInfo> m_processes;
+    QVector<procprobe::ProcessInfo> m_previous;   ///< 上一次采样，算速率用
+    QHash<quint32, proctext::ProcRates> m_rates;
     QVector<quint32> m_rowPids;        ///< 当前表格里每一行的 pid，用于判断"结构是否变了"
+    qint64 m_lastSampleMs = 0;         ///< 上次采样时刻（毫秒时间戳），0 表示还没有基准
     quint64 m_releasedTotal = 0;       ///< 本次面板生命周期内累计回收（面板关掉即清零）
     QDateTime m_lastAutoRelease;       ///< 上次自动释放时间，用于冷却
     QDateTime m_statusHoldUntil;       ///< 状态栏消息的占用截止时间
     bool m_releasing = false;          ///< 正在回收，防止 refresh → 自动释放 → refresh 递归
     int m_lastLevel = -1;              ///< 概览卡当前警戒等级，只在变化时重刷样式
+    proctext::SortKey m_sortKey = proctext::SortKey::Memory;   ///< 默认按内存降序（最常用）
+    bool m_sortDescending = true;
 };

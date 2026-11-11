@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // WebSocket 调试插件：连到 ws:// / wss:// 服务收发文本，或在本机起一个 ws:// 服务端。
 //
-// 实现分层（与本仓库 memmon / colorpicker 的组织方式一致）：
+// 实现分层（与本仓库 procmon / colorpicker 的组织方式一致）：
 //   WsProtocol.h      纯协议逻辑（地址解析、双方握手、帧编解码），无 socket 无 UI，可单独测试；
 //   WsClient.*        客户端连接层（QTcpSocket / QSslSocket），只发语义化信号；
 //   WsServer.*        服务端连接层（QTcpServer），按会话管理握手与收发；

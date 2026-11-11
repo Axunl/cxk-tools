@@ -35,7 +35,7 @@ constexpr auto ink     = xtools::theme::Color::TextBody;    // 常规信息
 ///
 /// 为什么不交给 qss：给 `QComboBox::drop-down` 写规则会去掉原生那条甩到圆角框外的
 /// 边框，但 Qt 同时就不画默认箭头了（见 docs/PLUGIN.md 的说明）。自绘一个透明子控件
-/// 最省事，位置由 JwtPanel::eventFilter 跟着下拉框尺寸摆（与 MemMonPanel 同一套做法）。
+/// 最省事，位置由 JwtPanel::eventFilter 跟着下拉框尺寸摆（与 ProcMonPanel 同一套做法）。
 class ComboArrow : public QWidget
 {
 public:
