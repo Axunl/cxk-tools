@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  cxk-tools 的硬化运行时（hardened runtime）授权文件，由 scripts/package-macos.sh
+  在签名时通过 entitlements 参数传给 codesign。
+
+  只有一个授权，理由：
+
+  com.apple.security.cs.disable-library-validation
+    关闭「库校验」。硬化运行时默认只允许加载与主程序同一 Team ID 签名、或带
+    苹果公证票据的动态库；而本项目的插件体系是「用户把一个 .dylib 丢进
+    Contents/MacOS/plugins 就生效」，那些第三方 / 自己编的插件既不是我们签的，
+    也没有票据，开着库校验会直接被 dyld 拒绝（表现是插件静默加载失败、
+    界面上少一个工具）。关掉它影响的只是「谁签的」，不影响硬化运行时的
+    其它保护（W^X、地址空间布局随机化等）。
+
+  刻意没有加的授权：
+    com.apple.security.cs.allow-jit / allow-unsigned-executable-memory
+      纯 Widgets 应用，没有 QML 虚拟机，不需要可写可执行内存。
+    com.apple.security.network.server
+      沙箱（App Sandbox）才需要；本应用没有开启沙箱，共享工具监听局域网端口
+      不需要额外授权。
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

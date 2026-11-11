@@ -124,6 +124,15 @@ echo [step] install to %STAGE%
 "%CMAKE_CMD%" --install build --prefix "%STAGE%" --config %BUILD_TYPE%
 if errorlevel 1 goto fail
 
+rem The jsrun plugin needs QtQml (QJSEngine). windeployqt below only inspects
+rem cxk-tools.exe, so it never sees that dependency; plugins\jsrun\CMakeLists.txt
+rem installs Qt6Qml.dll itself. Fail loudly here instead of shipping a package
+rem where the tool silently disappears from the home grid.
+if not exist "%STAGE%\Qt6Qml.dll" (
+    echo [error] Qt6Qml.dll missing in staging - the jsrun plugin would not load
+    goto fail
+)
+
 rem ---- Qt runtime -------------------------------------------------------------
 set "WINDEPLOYQT=%QTDIR%\bin\windeployqt.exe"
 if not exist "%WINDEPLOYQT%" (
@@ -168,6 +177,30 @@ echo [step] prune redundant Qt runtime
 "%CMAKE_CMD%" -DXTools_STAGE_DIR="%ROOT%\%STAGE%" -P "%ROOT%\cmake\PruneQtRuntime.cmake"
 if errorlevel 1 goto fail
 
+rem ---- Authenticode signing (staging) -----------------------------------------
+rem Sign every binary that ends up in the zip / installer BEFORE the archive is
+rem created: a signature rewrites the PE file, so signing afterwards would leave
+rem the copies inside the zip unsigned and would invalidate the SHA256 that
+rem latest.json and the in-app updater compare against.
+rem
+rem Which files: only our own (cxk-tools.exe + plugins\*.dll). Qt / MSVC /
+rem onnxruntime DLLs keep the vendor signature - re-signing them with our
+rem certificate would claim we produced them.
+rem
+rem Exit codes of sign-windows.ps1: 0 signed, 2 no certificate configured (local
+rem build: warn and continue), 1 configured but broken (bad password, signtool
+rem failure, verification failure) - always fatal, because silently shipping an
+rem unsigned or mis-signed release is exactly what this step exists to prevent.
+echo [step] sign binaries
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\sign-windows.ps1" -StageDir "%ROOT%\%STAGE%"
+if errorlevel 2 goto sign_skipped
+if errorlevel 1 goto fail
+goto sign_done
+
+:sign_skipped
+echo [warn] no signing certificate - artifacts stay unsigned (SmartScreen will warn)
+
+:sign_done
 rem ---- portable zip -----------------------------------------------------------
 set "ZIP=%ROOT%\dist\cxk-tools-%VERSION%-windows-x64.zip"
 set "SETUP=%ROOT%\dist\cxk-tools-%VERSION%-windows-x64-setup.exe"
@@ -195,6 +228,22 @@ if not defined ISCC goto no_iscc
 echo [step] Inno Setup: %ISCC%
 "%ISCC%" /DAppVersion=%VERSION% installer\windows\cxk-tools.iss
 if errorlevel 1 goto fail
+
+rem Sign the installer AFTER Inno Setup wrote it. Deliberately not using Inno's
+rem own SignTool (/Sname=... + SignedUninstaller): that command line would have to
+rem carry the certificate material, and quoting a command that contains spaces in
+rem cmd is the same class of trap that already broke the first CI run (see the two
+rem notes above). Trade-off, documented in README: the uninstaller Inno generates
+rem at install time stays unsigned, so uninstalling still shows "unknown publisher"
+rem in the UAC prompt - installing does not.
+echo [step] sign installer
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\sign-windows.ps1" -ExtraFile "%SETUP%"
+if errorlevel 2 goto setup_sign_skipped
+if errorlevel 1 goto fail
+goto skip_installer
+
+:setup_sign_skipped
+echo [warn] installer left unsigned - SmartScreen will warn on install
 goto skip_installer
 
 :no_iscc

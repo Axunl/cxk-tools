@@ -60,6 +60,14 @@ jobs:
     name: windows-x64
     needs: prepare
     runs-on: windows-2022
+    # 代码签名走 secret：没配就照常出包（只多一条 ::warning），配上就自动生效，
+    # 以后补证书不需要改工作流。证书内容只进环境变量，不出现在任何命令行参数里
+    # （runner 上的其它进程能看到命令行，日志里也会原样打印）。
+    env:
+      WIN_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+      XTOOLS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+      WIN_HAS_CERT: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 != '' }}
+      XTOOLS_REQUIRE_SIGNING: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 != '' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,6 +119,26 @@ jobs:
         shell: bash
         run: python scripts/fetch-onnxruntime.py
 
+      # 证书以 base64 存进 secret（PFX 是二进制，secret 只能放文本）。这里解到
+      # RUNNER_TEMP 并交给 package.bat 的签名步骤；scripts/sign-windows.ps1 会把它
+      # 导入当前用户的证书库、按指纹签名、结束时删掉证书与临时文件。
+      - name: Prepare signing certificate
+        if: env.WIN_HAS_CERT == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'cxk-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WIN_SIGN_PFX_BASE64))
+          "XTOOLS_SIGN_PFX=$pfx" >> $env:GITHUB_ENV
+          Write-Host "signing certificate staged at $pfx"
+
+      # 没配证书不阻塞发布（本地开发、fork 的 PR 都拿不到 secret），但必须留下
+      # 一条注解，免得「发了个未签名的包」这件事悄无声息地过去。
+      - name: Warn about unsigned build
+        if: env.WIN_HAS_CERT != 'true'
+        shell: bash
+        run: echo "::warning::WINDOWS_SIGN_PFX_BASE64 未配置，本次产物未签名（SmartScreen 会拦）"
+
       - name: Build and package
         shell: cmd
         env:
@@ -145,6 +173,15 @@ jobs:
           # Intel 包首轮先不做（清单里缺该平台时客户端会退化到打开发布页）
           - os: macos-15
             arch: arm64
+    # 签名 / 公证同样走 secret，缺失时只告警不阻塞（见 windows 任务的说明）。
+    env:
+      MAC_SIGN_P12_BASE64: ${{ secrets.MACOS_SIGN_P12_BASE64 }}
+      MAC_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+      XTOOLS_APPLE_ID: ${{ secrets.APPLE_ID }}
+      XTOOLS_APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      XTOOLS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      MAC_HAS_CERT: ${{ secrets.MACOS_SIGN_P12_BASE64 != '' }}
+      XTOOLS_REQUIRE_NOTARIZATION: ${{ secrets.MACOS_SIGN_P12_BASE64 != '' && secrets.APPLE_APP_PASSWORD != '' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -155,6 +192,53 @@ jobs:
           version: "6.8.3"
           arch: clang_64
           cache: true
+
+      # 建一个独立钥匙串并把 .p12 导进去：runner 的登录钥匙串不保证能拿到
+      # codesign 的访问权限，且这样删除时不会影响系统其它证书。
+      # set-key-partition-list 是必须的 —— 少了它 codesign 会卡在
+      # "User interaction is not allowed" 上。
+      - name: Import Developer ID certificate
+        if: env.MAC_HAS_CERT == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/cxk-signing.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          echo -n "$MAC_SIGN_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/sign.p12" -k "$KEYCHAIN" -P "$MAC_SIGN_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN"
+          ID="$(security find-identity -v -p codesigning "$KEYCHAIN" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+          if [ -z "$ID" ]; then
+            echo "::error::P12 里没有 Developer ID Application 身份（是不是导出成了 Apple Distribution？）"
+            security find-identity -v -p codesigning "$KEYCHAIN" || true
+            exit 1
+          fi
+          echo "XTOOLS_MACOS_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/sign.p12"
+          echo "signing as: $ID"
+
+      # notarytool 的凭据存成 keychain profile，后面的提交命令只引用 profile 名，
+      # 密码不会出现在任何命令行与日志里。
+      - name: Store notarization credentials
+        if: env.MAC_HAS_CERT == 'true' && env.XTOOLS_APPLE_ID != '' && env.XTOOLS_APPLE_APP_PASSWORD != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun notarytool store-credentials "cxk-notary" \
+            --apple-id "$XTOOLS_APPLE_ID" \
+            --password "$XTOOLS_APPLE_APP_PASSWORD" \
+            --team-id "$XTOOLS_APPLE_TEAM_ID"
+          echo "XTOOLS_NOTARY_PROFILE=cxk-notary" >> "$GITHUB_ENV"
+
+      - name: Warn about unsigned build
+        if: env.MAC_HAS_CERT != 'true'
+        shell: bash
+        run: echo "::warning::MACOS_SIGN_P12_BASE64 未配置，本次 .app 只有 ad-hoc 签名、不公证（Gatekeeper 会拦）"
 
       # 用 `bash scripts/xxx` 而不是 `./scripts/xxx`：仓库在 Windows 上开发，core.fileMode
       # 常常是 false，脚本很容易以 100644 提交（没有可执行位），checkout 到 runner 上就是
@@ -174,6 +258,14 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
+
+      # 私钥不能留在 runner 上（临时机器，但失败重试时会复用同一台）。
+      - name: Delete signing keychain
+        if: always() && env.MAC_HAS_CERT == 'true'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/cxk-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/sign.p12"
 
   release:
     name: publish
