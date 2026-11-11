@@ -196,7 +196,7 @@ cxk-tools/
 │   ├── jsonfmt/{JsonFmtTool.*, JsonFmtPanel.*, JsonEditor.*, JsonHighlighter.*, JsonText.h}
 │   ├── calc/{CalcTool.*, ExprEval.h}
 │   ├── ipquery/{IpQueryTool.*, IpQueryLogic.h}
-│   ├── memmon/{MemMonTool.*, MemMonPanel.*, MemProbe.*, MemText.h}
+│   ├── procmon/{ProcMonTool.*, ProcMonPanel.*, ProcProbe.*, ProcText.h}
 │   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
 │   ├── translate/{TranslateTool.*, TranslatePanel.*, TranslateLogic.h}
 │   ├── colorpicker/{ColorPickerTool.*, ColorPickerPanel.*, ColorText.h, ColorProbe.h}
@@ -210,7 +210,9 @@ cxk-tools/
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
 │   ├── share/{ShareTool.*, SharePanel.*, ShareStore.*, ShareServer.*, ShareHttp.h, ShareWeb.h}
 │   ├── qrcode/{QrCodeTool.*, QrCodePanel.*, QrEncode.*, QrDecode.*, QrGalois.h, QrLayout.h, QrTables.h}
-│   └── memes/{MemeTool.*, MemePanel.*, MemeTile.*, MemeGrid.*, MemePreview.*, MemeCache.*, MemeSource.h}
+│   ├── memes/{MemeTool.*, MemePanel.*, MemeTile.*, MemeGrid.*, MemePreview.*, MemeCache.*, MemeSource.h}
+│   ├── finance/{FinanceTool.*, FinancePanel.*, FinanceQuote.h}
+│   └── hotsearch/{HotSearchTool.*, HotSearchPanel.*, HotSearchSource.h}
 ├── assets/
 │   ├── app.ico                 Windows 图标（PNG 条目的多尺寸 ICO，被 src/app/app.rc.in 引用）
 │   ├── app.icns                macOS 图标（icp4~ic10，打包时拷进 .app/Contents/Resources）
@@ -858,11 +860,31 @@ add_subdirectory(plugins/mytool)
 - 粘贴后光标的三级映射见 `mapCursorPosition()`：文末 → 文末；非空白字符锚点（需校验）；
   都对不上（`QJsonDocument` 输出会按键名排序）才退回"保行号 + 列号夹住"。
 
-## 内存监控（`plugins/memmon`，插件内部）
+## 进程监控（`plugins/procmon`，插件内部）
 
-- 分三层：`MemProbe`（唯一碰平台 API 的地方，只暴露 Qt 值类型）、
-  `MemText.h`（纯逻辑：单位换算、占用率、筛选排序、回收候选，全部 inline）、`MemMonPanel`（界面）。
-  纯逻辑抽成 header 是为了能在临时工程里直接断言，不必真的去刷别人的工作集。
+- 分三层：`ProcProbe`（唯一碰平台 API 的地方，只暴露 Qt 值类型）、
+  `ProcText.h`（纯逻辑：单位换算、占用率、**采样差值算 CPU/磁盘速率**、筛选排序、回收候选，
+  全部 inline）、`ProcMonPanel`（界面）。纯逻辑抽成 header 是为了能在临时工程里直接断言，
+  不必真的去刷别人的工作集。
+- **探针无状态、只给累计值**：CPU 用累计 CPU 时间、磁盘用累计读写字节，占用率由
+  `proctext::computeRates(上次采样, 本次采样, 间隔毫秒, 核数)` 做差算出。
+  好处是同一份数据可以既显示又排序，坏处是**第一次采样没有基准，CPU/磁盘显示 `—`**（别改成 0%，
+  那会让人以为进程没在跑）。间隔 < 500ms 时不算速率：释放内存后会立刻 refresh，那种 20ms 的差值全是噪音。
+- CPU 口径是**占整机**（差值 ÷ 墙钟 ÷ 核数），与任务管理器一致；单核吃满在 8 核机上显示 12.5%。
+  计数器变小（进程重启、macOS 32 位网卡计数器回绕）一律按 0 算，不能让差值回绕成天文数字。
+- **按端口搜索靠"监听端口"表**：Windows 走 `GetExtendedTcpTable(OWNER_PID_LISTENER)` +
+  `GetExtendedUdpTable`（只有内核 owner 表里才有 pid）；Linux 先建 `/proc/net/{tcp,tcp6,udp,udp6}`
+  的 inode→端口表，再扫 `/proc/<pid>/fd` 的 `socket:[inode]` 反查；macOS 用 `/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN -iUDP`。
+  只收 **LISTEN / 已绑定的 UDP**：已建立连接会带出几十个随机临时端口，把搜索淹掉。端口 0 是占位条目，必须过滤。
+- Windows 侧三个原生库：`psapi`（内存/回收）、`iphlpapi`（端口表 + `GetIfTable2`）、`shell32`（`CommandLineToArgvW`）。
+  **`ws2ipdef.h` 必须在 `iphlpapi.h` 之前引** —— `netioapi.h` 里 `MIB_IF_TABLE2` / `GetIfTable2`
+  整段包在 `#ifdef _WS2IPDEF_` 里，而 `iphlpapi.h` 自己不引它，漏了只会报"未知类型"，看不出是头依赖缺失。
+- **重启进程 = 读命令行 → 结束 → 用同样的 program/args/cwd 重新拉起**。读不到命令行就直接报错，
+  绝不"按空参数重启"（带参数的进程会变成空壳，比不重启更让人困惑）。Windows 读命令行是读 PEB：
+  `NtQueryInformationProcess(ProcessBasicInformation)` → PEB 偏移 `0x20`(x64)/`0x10`(x86) 取
+  `ProcessParameters` → `CommandLine` 在 `0x70`/`0x40`、`CurrentDirectory` 在 `0x38`/`0x24`。
+  这套偏移没有公开头文件，**只在同位数进程之间读**（`IsWow64Process` 两边比一次），跨位数直接放弃。
+  `argv[0]` 常是裸名（"ping"），能拿到真实 exe 路径就换成绝对路径，免得重启时按 PATH 找错版本。
 - **采样只在面板可见时进行**：`showEvent` 起定时器、`hideEvent` 停。内嵌面板被页栈藏起来后
   还每 2 秒枚举几百个进程（每个都要 OpenProcess）是纯浪费。
 - **回收能力只有 Windows 有**（`EmptyWorkingSet`）。Linux 内核与 macOS 都没有普通用户可用的
@@ -878,10 +900,16 @@ add_subdirectory(plugins/mytool)
 - 表格行高由 `RowHeightDelegate::sizeHint` 给最小值（30px）。qss 的 `::item padding` 只管左右，
   竖向高度来自 delegate，写 qss 调不动。
 - 阈值下拉框的箭头是 `ComboArrow`（`QComboBox` 的自绘子控件、`WA_TransparentForMouseEvents`），
-  由 `MemMonPanel::eventFilter` 在 Resize / EnabledChange 时重摆与改色。qss 无法可靠画这个箭头，
+  由 `ProcMonPanel::eventFilter` 在 Resize / EnabledChange 时重摆与改色。qss 无法可靠画这个箭头，
   原因见下面踩坑表；别再往回去改 `::down-arrow`。
 - 自动释放的开关与累计释放量都是**面板实例状态**，没有落盘：宿主不缓存面板，离开工具即重置，
-  与「面板不缓存」的既有约定一致（也避免两份面板互相串状态）。
+  与「面板不缓存」的既有约定一致（也避免两份面板互相串状态）。开关**默认开启**、阈值默认「占用 ≥ 80%」：
+  下拉里存的是"占用阈值"（用户直觉），判定函数吃"可用阈值"，由 `proctext::availableThreshold()` 换算一次。
+- **网络列固定显示 `—`**，这是刻意的：按进程统计网络流量三大系统都没有免管理权的公开接口
+  （Windows 要 ETW + 管理员，Linux 内核只按网络命名空间记账）。整机上下行速率给在概览卡里，
+  单元格与表头的悬浮提示都写明了原因 —— 别为了"看起来完整"编一个数字出来。
+- 表格可点表头换排序列（`proctext::SortKey`），网络列没有数字所以点它不响应；
+  指标列把读不到数值的进程沉底，否则一堆 `—` 会夹在中间像排序坏了。
 
 ## 翻译（`plugins/translate`，插件内部）
 
@@ -1016,7 +1044,7 @@ add_subdirectory(plugins/mytool)
 
 - 分层：`OcrText.h` / `OcrPostprocess.h`（纯逻辑，可临时断言）、`OcrOnnx.*`（PP-OCR 推理，
   PIMPL 藏 Ort:: 类型）、`OcrEngine.*`（唯一碰平台差异的地方）、`OcrCapture.*`（纯 Qt 全屏框选
-  浮层）、`OcrPanel.*`（界面）。分层理由同 memmon/colorpicker：纯逻辑抽成 header 才能在临时
+  浮层）、`OcrPanel.*`（界面）。分层理由同 procmon/colorpicker：纯逻辑抽成 header 才能在临时
   工程里直接 include 验证。
 - **首选后端是 PP-OCRv4（ONNX Runtime）**，三端统一、离线、识别率最高；模型缺失/加载失败/推理
   失败时 `recognize()` 用 `error == "__FALLBACK__"` 占位回退到平台原生引擎。三个后端最终都
@@ -1060,7 +1088,7 @@ add_subdirectory(plugins/mytool)
 
 ## 文件占用释放（`plugins/filelock`，插件内部）
 
-- 三层同 memmon：`FileLockLogic.h`（纯 Qt Core：路径解析 / 展开 / 归一化 / 匹配 / 按 pid 归并，
+- 三层同 procmon：`FileLockLogic.h`（纯 Qt Core：路径解析 / 展开 / 归一化 / 匹配 / 按 pid 归并，
   可单独断言）、`FileLockProbe`（唯一碰原生 API 的地方，只出 Qt 值类型）、`FileLockPanel`（界面）。
 - **平台能力**：检测三端都有 —— Windows Restart Manager（官方接口，按文件查占用者）、
   Linux `/proc/<pid>/fd` 符号链接、macOS 系统 `lsof -F pcn`（未在实机验证，失败返回原始错误）。
@@ -1273,7 +1301,7 @@ add_subdirectory(plugins/mytool)
 | 自动格式化后光标跳到别的 token 上 | `QJsonDocument` 输出时按键名排序，字符流不再一一对应，"非空白字符锚点"会失效 | `mapCursorPosition()` 里先校验锚点、校验不过退回保行号映射 |
 | 粘贴走了一条没被监听的路径（右键菜单粘贴没格式化） | 各路粘贴在 Qt 里最终都落到 `insertFromMimeData()`，只管快捷键一定会漏 | 在 `JsonEditor::insertFromMimeData()` 里发信号，别在 `keyPressEvent` 里匹配 Ctrl+V |
 | 自动缩进把输入法的拼字打断/吞掉按键 | 拼字期间的按键还不是最终文本 | `handleAutoIndent()` 开头检查 `isComposing()` 直接返回 |
-| 进程表每 2 秒闪一下、选中的行也丢了 | 每次采样都 `clear()` 整表重建 | pid 序列没变就只改文字，变了才重建并恢复选中行与滚动位置（`MemMonPanel::rebuildTable`） |
+| 进程表每 2 秒闪一下、选中的行也丢了 | 每次采样都 `clear()` 整表重建 | pid 序列没变就只改文字，变了才重建并恢复选中行与滚动位置（`ProcMonPanel::rebuildTable`） |
 | 表格行高怎么调都是 20px | qss 的 `::item padding` 只管左右，行高来自 delegate 的 `sizeHint` | 用 `RowHeightDelegate` 设最小行高，别再和 qss 较劲 |
 | 下拉框右侧出现深色 L 形线 / 箭头消失 / 两个箭头压住文字 | 原生 `::drop-down` 的边框会被 qss 的 `padding` 挤到圆角框外；写规则修它又会让 Qt 停画默认箭头；`::down-arrow { image }` 会把图片重复画到当前项文字后，`background-image` 则整片平铺 | `::drop-down` 只写定位 + `border: none; background: transparent`（并给 `QComboBox` 右侧留 24px padding），箭头用面板里的自绘子控件 `ComboArrow`，位置在 `eventFilter` 里跟着 Resize 摆；每个用到 `QComboBox` 的面板都要各自补一份（翻译页三个下拉曾整页漏补，用户因此找不到引擎入口）；不要试图用 qss 画这个箭头 |
 | 读进程内存统计返回 0 / 打不开 | 用 `PROCESS_QUERY_LIMITED_INFORMATION` 读统计没问题，但刷工作集要 `QUERY_INFORMATION + SET_QUOTA` | 采样与回收分别开句柄，别指望一个权限位通吃 |
