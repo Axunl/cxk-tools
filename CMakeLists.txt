@@ -121,6 +121,7 @@ add_subdirectory(plugins/finance)
 add_subdirectory(plugins/hotsearch)
 add_subdirectory(plugins/screenrec)
 add_subdirectory(plugins/jsrun)
+add_subdirectory(plugins/sqlfmt)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。
