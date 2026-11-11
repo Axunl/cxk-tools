@@ -14,7 +14,7 @@ if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(cxk-tools VERSION 0.3.1 LANGUAGES CXX)
+project(cxk-tools VERSION 0.4.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # 版本号的单一来源就是上面这一行 project()。这里额外做两件事：
@@ -100,7 +100,7 @@ add_subdirectory(src)
 add_subdirectory(plugins/jsonfmt)
 add_subdirectory(plugins/calc)
 add_subdirectory(plugins/ipquery)
-add_subdirectory(plugins/memmon)
+add_subdirectory(plugins/procmon)
 add_subdirectory(plugins/filelock)
 add_subdirectory(plugins/ocr)
 add_subdirectory(plugins/translate)
@@ -114,6 +114,8 @@ add_subdirectory(plugins/share)
 add_subdirectory(plugins/websocket)
 add_subdirectory(plugins/qrcode)
 add_subdirectory(plugins/memes)
+add_subdirectory(plugins/finance)
+add_subdirectory(plugins/hotsearch)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。
