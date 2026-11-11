@@ -52,7 +52,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # Network 是给 QLocalServer 用的（单实例），少了会链接失败。
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network)
+# Qml 只给 plugins/jsrun 用（QJSEngine 在 QtQml 里）——插件是独立 MODULE，
+# 额外模块必须在顶层声明，子目录里才存在 Qt6::Qml 这个 imported target。
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Qml)
 qt_standard_project_setup()
 
 if(MSVC)
@@ -118,6 +120,7 @@ add_subdirectory(plugins/memes)
 add_subdirectory(plugins/finance)
 add_subdirectory(plugins/hotsearch)
 add_subdirectory(plugins/screenrec)
+add_subdirectory(plugins/jsrun)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。

@@ -10,6 +10,10 @@
 # 每次增量构建都跑一遍太浪费。这里用 stamp 文件按「构建配置」记账，只有首次
 # （或换了 Debug/Release、或 bin 被清空）才真正部署。
 #
+# 只处理主程序 exe：windeployqt 靠 exe 的导入表推依赖，看不到插件的。插件自己
+# 独占的 Qt 模块由插件目标负责（例：plugins/jsrun 需要 Qt6Qml.dll，它自己的
+# CMakeLists 里 POST_BUILD 拷一份到 bin/）。
+#
 # 入参（全部由 src/CMakeLists.txt 传入）：
 #   XTOOLS_WINDEPLOYQT  windeployqt 可执行文件绝对路径
 #   XTOOLS_TARGET_EXE   刚构建出来的主程序

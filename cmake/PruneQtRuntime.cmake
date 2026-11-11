@@ -10,7 +10,9 @@
 #   CMake 脚本在三个平台的 CI 上都能直接跑，不必维护两套删除逻辑。
 #
 # 为什么删得掉：本程序是 Qt Widgets + 光栅渲染 + 系统 TLS，
-# 没有 Qt Quick / QML / OpenGL / SVG 资源，见每一项后面的说明。
+# 没有 Qt Quick / QML 运行时 / OpenGL / SVG 资源，见每一项后面的说明。
+# 唯一例外是 QtQml 这个**库**：jsrun 插件用 QJSEngine（自带 JS 引擎），需要
+# Qt6Qml.dll / QtQml.framework，但它仍然不需要 qml/ 下的任何 import 模块。
 # 删除任何一项前请确认对应的能力确实没被用到，否则宁可不删。
 # ---------------------------------------------------------------------------
 
@@ -90,7 +92,10 @@ if(CMAKE_HOST_WIN32)
     # CRT DLL，不需要这个「安装时再跑一遍安装程序」的重型方案。
     _xtools_prune("${_bin}/vc_redist.x64.exe" "改由 app-local CRT DLL 满足运行库依赖")
     _xtools_prune("${_bin}/translations" "Qt 自带翻译，界面文案自备")
-    _xtools_prune("${_bin}/qml" "没有 QML 运行时")
+    # 只删 QML 的 import 目录：jsrun 插件用 QJSEngine 直接 evaluate()，不做
+    # importModule()，不需要 qml/ 下的任何模块。但 Qt6Qml.dll 本身**必须保留**
+    # （QJSEngine 在它里面），删了这个插件就加载失败、工具从首页消失。
+    _xtools_prune("${_bin}/qml" "没有 QML import 模块；jsrun 的 QJSEngine 只用 Qt6Qml.dll")
     # 随 CRT 一起拷进来的两个未使用项：C++/CX（WinRT）运行时与并发运行时库。
     _xtools_prune("${_bin}/vccorlib140.dll" "只有 C++/CX(WinRT) 会用到")
     _xtools_prune("${_bin}/concrt140.dll" "只有并发运行时(ConcRT)会用到")
@@ -102,16 +107,18 @@ elseif(CMAKE_HOST_APPLE)
     _xtools_prune("${_contents}/PlugIns/iconengines" "qsvgicon 只服务 SVG 图标")
     _xtools_prune("${_contents}/PlugIns/generic" "TUIO 触摸协议插件")
     _xtools_prune("${_contents}/Resources/translations" "Qt 自带翻译，界面文案自备")
-    _xtools_prune("${_contents}/Resources/qml" "没有 QML 运行时")
-    _xtools_prune("${_contents}/Frameworks/QtQml.framework" "没有 QML")
-    _xtools_prune("${_contents}/Frameworks/QtQmlModels.framework" "没有 QML")
+    # 同 Windows：只删 qml/ 里的 import 模块。QtQml.framework **不能删** ——
+    # jsrun 插件的 QJSEngine 在它里面（删掉的表现是插件加载失败、工具静默消失）。
+    _xtools_prune("${_contents}/Resources/qml" "没有 QML import 模块；jsrun 的 QJSEngine 只用 QtQml.framework")
+    _xtools_prune("${_contents}/Frameworks/QtQmlModels.framework" "没有 QML 模型层")
     _xtools_prune("${_contents}/Frameworks/QtQuick.framework" "没有 Qt Quick")
 
 else()
     # Linux：Qt 运行库来自发行版，staging 里只有可执行文件和插件，没有可裁的
-    # 大件；只清理可能被拷进来的调试符号与 QML 目录。
+    # 大件；只清理可能被拷进来的调试符号与 QML import 目录（QJSEngine 所在的
+    # libQt6Qml 由发行版提供，与 staging 无关）。
     set(_root "${_xtools_stage}")
-    _xtools_prune("${_root}/qml" "没有 QML 运行时")
+    _xtools_prune("${_root}/qml" "没有 QML import 模块；jsrun 的 QJSEngine 只用 libQt6Qml")
     _xtools_prune("${_root}/translations" "Qt 自带翻译，界面文案自备")
 endif()
 
