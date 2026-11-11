@@ -1,6 +1,7 @@
 #include "SharePanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "ShareServer.h"
 #include "ShareStore.h"
@@ -69,6 +70,7 @@ QPushButton *makeMiniButton(const QString &text, QWidget *parent)
 {
     auto *button = new QPushButton(text, parent);
     button->setObjectName(QStringLiteral("fsMiniBtn"));
+    button->setProperty("compact", true);
     return button;
 }
 
@@ -109,7 +111,7 @@ SharePanel::SharePanel(QWidget *parent)
     setAcceptDrops(true);
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(28, 0, 28, 20);   // 与宿主页头 28px 留白对齐
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);   // 与宿主页头 28px 留白对齐
     root->setSpacing(10);
 
     root->addWidget(buildAddressCard());
@@ -186,6 +188,7 @@ QWidget *SharePanel::buildAddressCard()
     // 用文字按钮而不是 ▾ 三角：U+25BE 在部分中文字体里是豆腐块（实测截图就是方块）。
     m_switchBtn = new QPushButton(QStringLiteral("切换"), card);
     m_switchBtn->setObjectName(QStringLiteral("fsSwitch"));
+    m_switchBtn->setProperty("compact", true);
     m_switchBtn->setToolTip(QStringLiteral("切换要发布的网卡地址"));
     m_switchBtn->setVisible(false);
     layout->addWidget(m_switchBtn);

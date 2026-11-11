@@ -143,7 +143,11 @@ void MyToolPlugin::setToolInput(const xtools::ToolInput &input)
   就要升 `XTOOLS_API_VERSION` 与默认 `apiVersion()`，否则旧插件会被拒绝加载并记日志
   （这是刻意的，避免虚表错位直接崩溃）。
 - **样式**：主程序已有全局 QSS，`QPushButton` / `QLineEdit` / `QPlainTextEdit` 直接用就是统一风格；
-  想要强调按钮可以 `btn->setProperty("accent", true)`。
+  想要强调按钮可以 `btn->setProperty("accent", true)`；固定尺寸的小按钮（图标钮、值网格、行内
+  操作钮）打 `btn->setProperty("compact", true)` 清掉全局按钮的 `min-height`，否则会被
+  `padding: 6px 14px` 撑爆。
+- **页面左右留白**用 `xtools::layout::kPageMargin`（`src/api/LayoutMetrics.h`，值 28），不要写死
+  数字，这样才能和主窗口页头对齐。
 - **不要写死颜色**：宿主支持浅色/深色两套主题（跟随系统或用户自选），插件是独立动态库，
   宿主看不到你拼的样式串。需要局部样式时用 `xtools::theme::applyStyle(widget, "…")`，
   颜色写成 `@bg` / `@text-faint` 这类令牌（表在 `src/api/ThemePalette.h`）；

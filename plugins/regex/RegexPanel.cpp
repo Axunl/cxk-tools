@@ -1,6 +1,7 @@
 #include "RegexPanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -149,7 +150,7 @@ RegexPanel::RegexPanel(QWidget *parent)
 {
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐；上方由宿主补留白
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(8);
 
     // ---- 1. 正则输入行 ---------------------------------------------------

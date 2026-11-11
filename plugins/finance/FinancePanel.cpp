@@ -1,6 +1,7 @@
 #include "FinancePanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用，换肤时宿主会重算）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用，换肤时宿主会重算）
 
 #include <QButtonGroup>
 #include <QClipboard>
@@ -355,7 +356,7 @@ void FinancePanel::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐（同 CalcPanel / IpQueryPanel 的约定）
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(10);
 
     // ---- 顶部工具条：分组标签 + 搜索框 + 刷新 ----

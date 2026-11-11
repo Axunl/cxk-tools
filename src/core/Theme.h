@@ -55,6 +55,11 @@ public:
     /// 解析配置值；无法识别时返回 System 并把 ok 置 false（调用方自行决定是否告警）。
     static Mode modeFromString(const QString &text, bool *ok = nullptr);
 
+signals:
+    /// 主题已落地（每次 apply 结束发一次）。给不依赖 qss、需要手工取色的地方用，
+    /// 例如主窗口的投影（QGraphicsDropShadowEffect 的颜色不读样式表，得手动刷新）。
+    void themeChanged();
+
 private:
     explicit Theme(QObject *parent = nullptr);
 

@@ -1,6 +1,7 @@
 #include "IpQueryTool.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "IpQueryLogic.h"   // 纯收集/解析逻辑（可单独测试，见 AGENTS.md 的验证流程）
 
@@ -114,7 +115,7 @@ public:
     {
         auto *layout = new QVBoxLayout(this);
         // 左右 28px 与主窗口页头对齐（同 CalcPanel 的约定）
-        layout->setContentsMargins(28, 0, 28, 20);
+        layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
         layout->setSpacing(10);
 
         // 条目放滚动区：网卡多的机器（一堆虚拟网卡）不至于把行挤出可视区

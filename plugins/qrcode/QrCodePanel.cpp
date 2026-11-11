@@ -1,6 +1,7 @@
 #include "QrCodePanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "QrDecode.h"
 #include "QrEncode.h"
@@ -119,7 +120,7 @@ QrCodePanel::QrCodePanel(QWidget *parent)
 
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐；上方留白由宿主补
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(12);
 
     layout->addWidget(buildPageSwitcher());

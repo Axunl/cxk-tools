@@ -37,6 +37,7 @@ class Settings;
 class SettingsPage;
 class ToolRegistry;
 class ToolWindow;
+class QGraphicsDropShadowEffect;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
@@ -119,6 +120,9 @@ private:
     void closeAllToolWindows();
     void saveWindowState();
 
+    /// 当前主题下的投影颜色（浅色偏浅、深色更不透明）。换肤时随 Theme::themeChanged 刷新。
+    QColor shadowColor() const;
+
     ToolRegistry *m_registry = nullptr;
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
@@ -126,6 +130,7 @@ private:
 
     QWidget *m_titleBar = nullptr;
     QLabel *m_hotkeyHint = nullptr;   ///< 标题栏上的热键提示，改热键时要同步刷新
+    QGraphicsDropShadowEffect *m_shadow = nullptr;   ///< 主窗口投影，换肤时刷新颜色
 
     QWidget *m_pageHeader = nullptr;   ///< 工具页/设置页的页头，首页时整块隐藏
     QPushButton *m_pageBack = nullptr;

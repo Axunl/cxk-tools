@@ -39,6 +39,7 @@ enum class Color
 {
     Bg,                 ///< 主表面：窗口、卡片、输入框底色
     BgAlt,              ///< 下沉表面：只读字段、表格头、禁用态
+    Card,               ///< 卡片表面：深色主题下比页面底稍亮，用来把卡片「抬」出来
     BgHover,            ///< 悬停底色
     BgPressed,          ///< 按下底色
     BgSubtle,           ///< 弱底色：胶囊、滚动条槽、行悬停
@@ -85,6 +86,7 @@ enum class Color
     TooltipText,        ///< 气泡文字
     Overlay,            ///< 浮层底色（吸管放大镜，带透明度）
     OnAccent,           ///< 实色块上的文字（两套主题都是白）
+    Shadow,             ///< 窗口投影色（主窗口无边框圆角下的投影，深色下更不透明）
     SyntaxKey,          ///< JSON 键名
     SyntaxString,       ///< JSON 字符串
     SyntaxNumber,       ///< JSON 数字
@@ -129,6 +131,10 @@ inline const QVector<Entry> &table()
     static const QVector<Entry> entries = {
         {Color::Bg, "bg", "#FFFFFF", "#1B1E24"},
         {Color::BgAlt, "bg-alt", "#F8FAFC", "#14161B"},
+        // 卡片表面：浅色与页面同为白（靠边框区分）；深色比页面 #1B1E24 略亮，
+        // 让卡片从底色里浮出来。注意不要与 bg-subtle（#23272F）撞得太近，
+        // 否则「卡片抬升」和「弱底色胶囊」两种语义在深色下分不开。
+        {Color::Card, "card", "#FFFFFF", "#23272F"},
         {Color::BgHover, "bg-hover", "#F5F8FD", "#23272F"},
         {Color::BgPressed, "bg-pressed", "#EBF1F9", "#2A3038"},
         {Color::BgSubtle, "bg-subtle", "#F1F5F9", "#23272F"},
@@ -146,7 +152,7 @@ inline const QVector<Entry> &table()
         {Color::TextBody, "text-body", "#334155", "#C7CEDA"},
         {Color::TextSecond, "text-second", "#475569", "#A6AFBD"},
         {Color::TextMuted, "text-muted", "#64748B", "#8A94A3"},
-        {Color::TextFaint, "text-faint", "#94A3B8", "#6F7987"},
+        {Color::TextFaint, "text-faint", "#74839A", "#7A8494"},
         {Color::TextDisabled, "text-disabled", "#A8B3C2", "#5B6472"},
         {Color::Accent, "accent", "#4F6BF6", "#6C82F8"},
         {Color::AccentHover, "accent-hover", "#4360EE", "#7F92FA"},
@@ -177,6 +183,9 @@ inline const QVector<Entry> &table()
         {Color::TooltipText, "tooltip-text", "#F8FAFC", "#E6E9EF"},
         {Color::Overlay, "overlay", "rgba(255,255,255,235)", "rgba(26,29,35,238)"},
         {Color::OnAccent, "on-accent", "#FFFFFF", "#FFFFFF"},
+        // 投影色：浅色主题用偏深的 slate 阴影，深色主题用纯黑（黑底上阴影更深才看得出）。
+        // 实际透明度在 C++ 里用 setAlpha 调（浅 ~90 / 深 ~180），这里只给基色。
+        {Color::Shadow, "shadow", "#0F172A", "#000000"},
         {Color::SyntaxKey, "syntax-key", "#1D4ED8", "#93B4FF"},
         {Color::SyntaxString, "syntax-string", "#047857", "#7EE2B8"},
         {Color::SyntaxNumber, "syntax-number", "#B45309", "#FBBF24"},

@@ -1,6 +1,7 @@
 #include "ColorPickerPanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "ColorProbe.h"
 #include "ColorText.h"
@@ -506,7 +507,7 @@ ColorPickerPanel::~ColorPickerPanel()
 void ColorPickerPanel::buildUi()
 {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(28, 0, 28, 20);   // 与宿主页头 28px 留白对齐
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);   // 与宿主页头 28px 留白对齐
     root->setSpacing(12);
 
     auto *columns = new QHBoxLayout;
@@ -611,6 +612,7 @@ void ColorPickerPanel::buildUi()
     }
     m_clearHistoryBtn = new QPushButton(QStringLiteral("清空"), this);
     m_clearHistoryBtn->setObjectName(QStringLiteral("cpSmallBtn"));
+    m_clearHistoryBtn->setProperty("compact", true);
     m_clearHistoryBtn->setFixedWidth(48);
     connect(m_clearHistoryBtn, &QPushButton::clicked, this, [this] {
         m_history.clear();
@@ -658,6 +660,7 @@ void ColorPickerPanel::buildUi()
 
         auto *copy = new QPushButton(QStringLiteral("复制"), card);
         copy->setObjectName(QStringLiteral("cpCopyBtn"));
+        copy->setProperty("compact", true);
         copy->setFixedWidth(46);
         // 捕获 QLineEdit 指针而不是当时的文本：颜色变了按钮复制的也是最新值。
         connect(copy, &QPushButton::clicked, this, [this, value] {

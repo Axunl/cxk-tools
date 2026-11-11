@@ -3,6 +3,7 @@
 #include "RegionSelectOverlay.h"
 #include "ScreenGrabber.h"
 #include "ThemePalette.h"
+#include "LayoutMetrics.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -133,7 +134,7 @@ ScreenRecPanel::ScreenRecPanel(QWidget *parent)
 
     auto *root = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐，视觉上像同一栏
-    root->setContentsMargins(28, 0, 28, 20);
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     root->setSpacing(12);
 
     root->addWidget(buildSetupCard());

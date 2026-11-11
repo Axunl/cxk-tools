@@ -225,4 +225,5 @@ void Theme::apply()
 
     applying = false;
     qInfo() << "Theme: applied" << modeToString(m_mode) << (dark ? "dark" : "light");
+    emit themeChanged();
 }

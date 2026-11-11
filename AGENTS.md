@@ -935,8 +935,24 @@ add_subdirectory(plugins/mytool)
   顶层 `QAbstractItemView`，只能靠 objectName 命中，见踩坑表。
 - 磁贴的 hover / 键盘选中走**动态属性**（`#launcherTile[hovered="true"]`、`#launcherTile[current="true"]`），
   不用 `:hover` —— QWidget 子类的 `:hover` 依赖样式引擎主动打 `WA_Hover`，跨版本不保证触发。
-- 全局 `QPushButton` 带 `padding: 6px 14px`，**30px 宽的小按钮必须显式 `padding: 0`**，
-  否则文字被挤没、只剩一个小点（标题栏的最小化/关闭曾因此显示成两个点）。
+- 全局 `QPushButton` 带 `padding: 6px 14px`，**小按钮统一打 `compact=true` 属性**（
+  `QPushButton[compact="true"] { min-height: 0px }`），不要再各写一遍 `padding:0; min-height:0`。
+  收敛边界：`compact` 只清 `min-height`（14 个按钮唯一共性）；`padding` 各按钮不统一、仍留在
+  各自 objectName 选择器里；`:checked`/`:hover` 的状态色也绝不吞进 compact。
+- **圆角三档**：卡片 10 / 内嵌 8 / 小控件 6。装饰性圆形（状态点、进度条）不并入三档。
+  **字号刻度**：11 / 12 / 13 / 15 / 17 五档（`#procPercent` 的 30px 大数字是特例保留），
+  新控件别再造出 10 / 14 / 16 这种中间档。
+- **深色卡片用 `@card` 令牌**（不是 `@bg-alt`）：`@bg-alt` 是「下沉表面」（只读字段、表格头、
+  禁用态），深色下提亮会连它们一起抬升、语义颠倒。`@card` 专做卡片抬升（深色比页面稍亮），
+  卡片选择器（`QGroupBox`、`#procCard`、`#flCard`、`#cpCard`、`#fsCard`、`#procTable`）用它。
+- **页面级左右留白用 `xtools::layout::kPageMargin`**（`src/api/LayoutMetrics.h`），不要在各文件
+  再写死 `28` —— 之前 MainWindow / HomePage / 24 个插件各写一份，改起来必然漏。
+- **按钮焦点态**：全局 `QPushButton:focus` 用 `@accent` 边框表达；`accent` 按钮用 `@accent-hover`
+  底色；无边框按钮（标题栏三个）只能用 `@bg-subtle` 底色（`border:none` 画不出边框）。
+- **主窗口投影**：无边框窗口靠 `QGraphicsDropShadowEffect` + 透明边距容器（`#mainShadowHost`）实现，
+  颜色走 `@shadow` 令牌、透明度在 `MainWindow::shadowColor()` 里按主题调；换肤时 `Theme::themeChanged`
+  触发刷新。投影宿主是 centralWidget，`QSizeGrip` 挂宿主上、`resizeEvent` 定位要扣掉投影边距，
+  见踩坑表。
 - qss 通过 `.qrc` 编进二进制（`CMAKE_AUTORCC ON`），路径固定 `:/style.qss`；改完不用改代码，重编即可。
 
 ## JSON 编辑器（`plugins/jsonfmt`，插件内部）
@@ -1547,6 +1563,9 @@ add_subdirectory(plugins/mytool)
 | 更新对话框里说明文字下面多出一根"横线" | `QTextBrowser` 默认按需横向滚动，长行触发横向滚动条 | `setLineWrapMode(QWidgetText::WidgetWidth)` + `setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff)` |
 | `package.bat` 打包时报 `vc_redist.x64.exe` 拒绝访问 | `windeployqt` 默认塞 25 MB 的 redist 安装器，且该文件被占用 | `--no-compiler-runtime` + 拷 app-local CRT DLL，prune 脚本里再兜底删一次 |
 | 安装器向导中文乱码 | `.iss` 被某次编辑存成了 GBK 或带 BOM 的 UTF-8 | 保持 UTF-8 无 BOM（Inno 6 能识别）；仍乱码就改存 UTF-8 with BOM，**不要改文案**（规则 5） |
+| 深色下改了卡片背景，分组框标题后挂一块色斑 | `QGroupBox::title` 用 `background` 压在边框上「割」开边框，这个底色必须等于**盒子自身底色**（不是页面底色）。旧代码盒子=页面同色时两者相等，一旦给盒子换 `@card` 而标题仍是 `@bg`，标题后那块就露馅 | 盒子和 `::title` 的 `background` 必须同步改（现在都走 `@card`），记住不变量是「title == box」 |
+| 主窗口加了投影后，缩放抓手飘到透明阴影区、或投影被裁掉 | ① `QGraphicsDropShadowEffect` 画在控件矩形外，超出窗口的部分直接不可见，四周不留透明边距阴影就出不来；② `QSizeGrip` 若还挂在带投影的 root 上会被投影「糊」一圈，且原定位 `width()-18` 会把抓手贴到透明阴影区而不是圆角卡片右下角 | 投影宿主（centralWidget）四周留 `kShadowMargin`（≥ blurRadius 的一半）；抓手挂宿主、`resizeEvent` 定位扣掉 `kShadowMargin` |
+| 小按钮收敛到 `compact` 后，某个按钮的高度突然不对了 | `compact` 只清 `min-height`，但个别小按钮的 `padding` 各不统一（0 / 2px / 3px 6px …），若把 padding 也塞进 compact 会把不同按钮的 padding 抹成一致、高度失配 | compact 收敛边界：只清 `min-height`；`padding`、`font-size`、`:checked`/`:hover` 状态色一律留在各 objectName 选择器 |
 | 打包报 `'C:\Program' is not recognized` | `%ProgramFiles(x86)%` 写在 `if (...)` 块内，`(x86)` 的 `)` 提前闭合块，剩余文本被当成命令执行 | 把这段逻辑挪出块（标签子程序 + `goto`），块内不要出现带括号的路径变量 |
 | 装好的 ISCC 找不到，或报 `"" 不是内部或外部命令` | 同一个块里先 `set` 再 `%VAR%`：整块在解析期就展开完了，读到的是空值 | 同上；确实要在块内取值就 `setlocal enabledelayedexpansion` 后用 `!VAR!` |
 | CI 上安装器步骤莫名失败、日志只有一行 err | 没有把「必须有安装器」变成硬约束 | CI 里设 `XTOOLS_REQUIRE_INSTALLER=1`，`package.bat` 缺 ISCC 即 `PACKAGE_FAILED` |

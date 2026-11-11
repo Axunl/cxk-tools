@@ -1,7 +1,8 @@
 #include "JwtTool.h"
 
 #include "JwtLogic.h"
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）   // 纯编解码/签名逻辑（可单独测试，见 AGENTS.md 的验证流程）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）   // 纯编解码/签名逻辑（可单独测试，见 AGENTS.md 的验证流程）
 
 #include <QComboBox>
 #include <QFontDatabase>
@@ -117,7 +118,7 @@ public:
     {
         auto *layout = new QVBoxLayout(this);
         // 左右 28px 与主窗口页头对齐，视觉上像同一栏
-        layout->setContentsMargins(28, 0, 28, 20);
+        layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
         layout->setSpacing(10);
 
         m_tabs = new QTabWidget(this);

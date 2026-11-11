@@ -1,4 +1,5 @@
 #include "FileLockPanel.h"
+#include "LayoutMetrics.h"
 
 #include "FileLockProbe.h"
 
@@ -179,7 +180,7 @@ FileLockPanel::FileLockPanel(QWidget *parent)
 {
     auto *root = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐（与其他插件面板一致）
-    root->setContentsMargins(28, 0, 28, 20);
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     root->setSpacing(12);
 
     auto *card = new QFrame(this);
@@ -467,6 +468,7 @@ void FileLockPanel::rebuildTable()
 
         auto *action = new QPushButton(QStringLiteral("结束"), m_table);
         action->setObjectName(QStringLiteral("flRowAction"));
+        action->setProperty("compact", true);
         action->setToolTip(QStringLiteral("强制结束这个进程"));
         action->setEnabled(fileprobe::canTerminate());
         const quint64 targetPid = holder.pid;

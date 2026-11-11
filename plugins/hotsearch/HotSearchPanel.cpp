@@ -1,7 +1,8 @@
 #include "HotSearchPanel.h"
 
 #include "HotSearchSource.h"        // 数据源表 + 解析（纯逻辑，可单独测）
-#include "ThemePalette.h"           // 颜色令牌（宿主与插件共用，换肤靠它）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"           // 颜色令牌（宿主与插件共用，换肤靠它）
 
 #include <QComboBox>
 #include <QDesktopServices>
@@ -210,7 +211,7 @@ void HotSearchPanel::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐（同 IpQueryPanel / CalcPanel 的约定）
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(10);
 
     // ---------------------------------------------------------------- 工具栏

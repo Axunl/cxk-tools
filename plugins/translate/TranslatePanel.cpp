@@ -1,5 +1,6 @@
 #include "TranslatePanel.h"
-#include "ThemePalette.h"   // 自绘控件用的颜色令牌
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 自绘控件用的颜色令牌
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -173,7 +174,7 @@ void TranslatePanel::buildUi()
 {
     auto *root = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐，与其余插件面板同一套留白约定
-    root->setContentsMargins(28, 0, 28, 20);
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     root->setSpacing(10);
 
     // ---- 顶部工具条：源语言 ⇄ 目标语言 / 自动翻译 / 引擎 / 翻译 ----
@@ -200,6 +201,7 @@ void TranslatePanel::buildUi()
 
     m_swap = new QPushButton(QStringLiteral("⇄"), this);
     m_swap->setObjectName(QStringLiteral("transSwap"));
+    m_swap->setProperty("compact", true);
     // 全局 QPushButton 有 6px 14px 的 padding，34px 宽的小按钮必须清零，
     // 否则箭头会被挤没（AGENTS.md 踩坑表里有同一条）
     m_swap->setFixedWidth(34);

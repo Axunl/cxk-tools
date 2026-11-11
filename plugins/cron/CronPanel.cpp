@@ -1,4 +1,5 @@
 #include "CronPanel.h"
+#include "LayoutMetrics.h"
 
 #include "CronExpr.h" // 纯逻辑（可单独测试，见 AGENTS.md 的验证流程）
 
@@ -59,7 +60,7 @@ void CronPanel::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐，视觉上像同一栏（与 CalcPanel 一致）
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(8);
 
     auto makeTitle = [this](const QString &text) {
@@ -80,6 +81,7 @@ void CronPanel::buildUi()
     m_expr->setFixedHeight(42);
     m_copy = new QPushButton(QStringLiteral("复制"), this);
     m_copy->setObjectName(QStringLiteral("cronCopyBtn"));
+    m_copy->setProperty("compact", true);
     exprRow->addWidget(m_expr, 1);
     exprRow->addWidget(m_copy);
     layout->addLayout(exprRow);
@@ -122,6 +124,7 @@ void CronPanel::buildUi()
         const auto type = static_cast<cron::FieldType>(i);
         auto *chip = new QPushButton(cron::fieldTypeName(type), this);
         chip->setObjectName(QStringLiteral("cronFieldChip"));
+        chip->setProperty("compact", true);
         chip->setCheckable(true);
         chip->setFixedSize(76, 44);
         chip->setToolTip(cron::fieldHint(type));
@@ -205,8 +208,10 @@ void CronPanel::buildUi()
     valuesTop->addStretch(1);
     auto *allBtn = new QPushButton(QStringLiteral("全选"), valuesPage);
     allBtn->setObjectName(QStringLiteral("cronMiniBtn"));
+    allBtn->setProperty("compact", true);
     auto *clearBtn = new QPushButton(QStringLiteral("清空"), valuesPage);
     clearBtn->setObjectName(QStringLiteral("cronMiniBtn"));
+    clearBtn->setProperty("compact", true);
     valuesTop->addWidget(allBtn);
     valuesTop->addWidget(clearBtn);
     valuesLay->addLayout(valuesTop);
@@ -254,6 +259,7 @@ void CronPanel::buildUi()
     fromRow->addWidget(m_from, 1);
     m_nowBtn = new QPushButton(QStringLiteral("现在"), this);
     m_nowBtn->setObjectName(QStringLiteral("cronMiniBtn"));
+    m_nowBtn->setProperty("compact", true);
     fromRow->addWidget(m_nowBtn);
     rightCol->addLayout(fromRow);
 
@@ -276,6 +282,7 @@ void CronPanel::buildUi()
     for (int i = 0; i < int(sizeof(kPresets) / sizeof(kPresets[0])); ++i) {
         auto *btn = new QPushButton(QString::fromUtf8(kPresets[i].label), this);
         btn->setObjectName(QStringLiteral("cronPresetBtn"));
+        btn->setProperty("compact", true);
         const QString expr = QString::fromUtf8(kPresets[i].expr);
         connect(btn, &QPushButton::clicked, this, [this, expr] {
             // 勾了秒字段就把预设补成 6 段（0 = 分钟起点，与标准 cron 触发时刻一致）
@@ -515,6 +522,7 @@ void CronPanel::rebuildValueGrid()
     for (int v = vmin; v <= hi; ++v) {
         auto *btn = new QPushButton(cron::valueButtonText(type, v), m_valuesHost);
         btn->setObjectName(QStringLiteral("cronValueBtn"));
+        btn->setProperty("compact", true);
         btn->setCheckable(true);
         btn->setFixedHeight(26);
         btn->setProperty("val", v);

@@ -1,6 +1,7 @@
 #include "TextKitPanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "TextDiff.h"    // 纯逻辑：行级 + 字符级差异，可单独 include 做断言测试
 #include "TextLines.h"   // 纯逻辑：切行、加引号拼接、集合差
@@ -244,7 +245,7 @@ TextKitPanel::TextKitPanel(QWidget *parent)
     connect(m_diffTimer, &QTimer::timeout, this, &TextKitPanel::runDiff);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(28, 0, 28, 20);   // 与宿主页头 28px 留白对齐
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);   // 与宿主页头 28px 留白对齐
     layout->setSpacing(10);
 
     m_tabs = new QTabWidget(this);

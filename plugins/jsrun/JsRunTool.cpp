@@ -4,7 +4,8 @@
 #include "JsRunConsole.h"
 #include "JsRunSamples.h"
 #include "JsRunStore.h"
-#include "ThemePalette.h" // 颜色令牌：写死色值在深色主题下会留白块
+#include "ThemePalette.h"
+#include "LayoutMetrics.h" // 颜色令牌：写死色值在深色主题下会留白块
 
 #include <QClipboard>
 #include <QComboBox>
@@ -219,7 +220,7 @@ void JsRunPanel::buildUi()
 {
     auto *root = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐，与其余插件面板同一套留白约定
-    root->setContentsMargins(28, 0, 28, 20);
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     root->setSpacing(10);
 
     auto *hint = new QLabel(

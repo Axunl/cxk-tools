@@ -22,6 +22,12 @@ QWidget {
 }
 
 /* ---------------------------------------------------------------- 根容器 */
+/* 投影宿主：centralWidget 的外层透明容器，四周留出投影边距。必须透明，
+   否则投影留白区会露一块底色（Windows 上配合 WA_TranslucentBackground 才透）。 */
+#mainShadowHost {
+    background: transparent;
+}
+
 /* 主界面底色统一为纯白：卡片（QGroupBox / 各工具的白底卡）靠 @border 细边框
    与底色区分，不再依赖"灰底烘托白卡"的层次。新增页面级容器也要跟着用 @bg，
    否则切换页面时会露出色差。 */
@@ -50,7 +56,7 @@ QWidget {
     color: @text-faint;
     background: @bg-subtle;
     border: 1px solid @border;
-    border-radius: 9px;
+    border-radius: 8px;
     padding: 1px 8px;
 }
 
@@ -61,11 +67,10 @@ QPushButton#titleBtnClose {
     border: none;
     border-radius: 6px;
     color: @text-second;
-    font-size: 16px;
+    font-size: 15px;
     /* 必须清零：全局 QPushButton 有 padding: 6px 14px，
        在 30px 宽的按钮里会把文字挤到没有空间，只剩一个小点。 */
     padding: 0px;
-    min-height: 0px;
 }
 
 QPushButton#titleBtn:hover,
@@ -94,9 +99,9 @@ QLineEdit#homeSearch {
     padding: 8px 36px 8px 12px;
     background: @bg;
     border: 1px solid @border;
-    border-radius: 9px;
+    border-radius: 8px;
     color: @text;
-    font-size: 14px;
+    font-size: 13px;
 }
 
 QLineEdit#homeSearch:focus {
@@ -128,7 +133,7 @@ QToolButton#homeSearchClear:pressed {
 #homeSearchResult {
     background: @accent-soft;
     border: 1px solid @border-accent;
-    border-radius: 7px;
+    border-radius: 6px;
     color: @accent-text;
 }
 
@@ -143,6 +148,17 @@ QToolButton#homeSearchClear:pressed {
 #homeContent {
     background: transparent;
     border: none;
+}
+
+/* 设置页的滚动容器：透明底 + 无边框，让里面的 QGroupBox 卡片直接浮在页面底色上，
+   与首页滚动区同一套观感。内容控件走 #settingsContent（透明），不用再单独画背景。 */
+QScrollArea#settingsScroll {
+    background: transparent;
+    border: none;
+}
+
+#settingsContent {
+    background: transparent;
 }
 
 #sectionTitle {
@@ -179,7 +195,7 @@ QToolButton#homeSearchClear:pressed {
    eventFilter）。用 @bg 白底而不是半透明：磁贴选中时底色是 accent-soft-strong，
    白块能明显浮起来；透明底会被压在选中色里看不清。 */
 #tileShortcut {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: @text-muted;
     background: @bg;
@@ -288,7 +304,7 @@ QPushButton#pagePopout {
 }
 
 #toolTitle {
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 600;
     color: @text;
 }
@@ -311,7 +327,7 @@ QPushButton#pagePopout {
 
 /* ---------------------------------------------------------------- 分组框 */
 QGroupBox {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
     margin-top: 14px;
@@ -326,16 +342,17 @@ QGroupBox::title {
     color: @text-second;
     font-size: 12px;
     font-weight: 600;
-    /* 标题压在边框上，底色必须等于页面底色才能把边框"割"开。
-       页面底色改白后这里也必须是白，否则标题后面会挂一块灰斑。 */
-    background: @bg;
+    /* 标题压在边框上，底色必须等于 QGroupBox 自身底色（@card）才能把边框「割」开。
+       这里的不变量是「title 底色 == 盒子底色」，不是「== 页面底色」——
+       盒子一旦改色，这里必须同步，否则标题后挂一块色斑。 */
+    background: @card;
 }
 
 /* ---------------------------------------------------------------- 按钮 */
 QPushButton {
     background: @bg;
     border: 1px solid @border-strong;
-    border-radius: 7px;
+    border-radius: 6px;
     padding: 6px 14px;
     min-height: 20px;
     color: @text-body;
@@ -358,6 +375,33 @@ QPushButton:disabled {
     color: @text-disabled;
 }
 
+/* 小按钮：全局 QPushButton 的 padding: 6px 14px + min-height: 20px 是为常规按钮
+   调的量，30px 宽的图标钮 / 值网格 / 行内操作钮会被它撑爆（标题栏按钮踩过这个坑）。
+   给这些小按钮打 compact=true，统一清掉 min-height，让它们按内容自收缩。
+   注意收敛边界：这里只清 min-height（14 个按钮唯一完全共性的属性）；padding 各按钮
+   不统一（0 / 2px / 3px 6px / ...），仍保留在各 objectName 选择器里；:checked 的 teal、
+   :hover 的 danger 等状态色也绝不能吞进这里。 */
+QPushButton[compact="true"] {
+    min-height: 0px;
+}
+
+/* 键盘焦点态：全局 QPushButton 只有 hover/pressed/disabled，没有 :focus，
+   用 Tab 键导航时按钮毫无反馈。默认钮用边框变色表达，强调钮（accent）用底色微变，
+   无边框钮（标题栏三个，border:none，border-color 画不出来）只能用底色表达。 */
+QPushButton:focus {
+    border-color: @accent;
+}
+
+QPushButton[accent="true"]:focus {
+    background: @accent-hover;
+}
+
+QPushButton#titleBtn:focus,
+QPushButton#titleBtnSettings:focus,
+QPushButton#titleBtnClose:focus {
+    background: @bg-subtle;
+}
+
 QPushButton[accent="true"] {
     background: @accent;
     border: 1px solid @accent;
@@ -374,7 +418,7 @@ QPushButton[accent="true"]:hover {
 QLineEdit {
     background: @bg;
     border: 1px solid @border-strong;
-    border-radius: 7px;
+    border-radius: 6px;
     padding: 6px 10px;
     selection-background-color: @accent;
     selection-color: @on-accent;
@@ -432,7 +476,7 @@ QCheckBox {
 QComboBox {
     background: @bg;
     border: 1px solid @border-strong;
-    border-radius: 7px;
+    border-radius: 6px;
     padding: 5px 24px 5px 10px;
     min-height: 20px;
     color: @text-body;
@@ -562,7 +606,7 @@ QToolTip {
 /* ---------------------------------------------------------------- 进程监控 */
 /* 概览卡：白底 + 细边框，与设置页的 QGroupBox 同一套观感 */
 #procCard {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
 }
@@ -635,7 +679,7 @@ QLineEdit#procSearch {
 /* 进程表。注意只给 ::item 加左右 padding —— 给 view 本身加 padding 会把 viewport
    撑得比内容还小，明明没几行也会常驻滚动条（补全弹窗踩过同一个坑）。 */
 QTreeWidget#procTable {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
     outline: none;
@@ -680,7 +724,7 @@ QTreeWidget#procTable QHeaderView::section {
 /* 白底卡片包住路径行 / 拖拽区 / 按钮 / 结果表，底部状态栏单独一条 */
 #flCard,
 #flFooter {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
 }
@@ -703,7 +747,7 @@ QPushButton#flDetect,
 QPushButton#flRelease,
 QPushButton#flTerminate {
     min-height: 38px;
-    font-size: 14px;
+    font-size: 15px;
 }
 
 /* 禁用时主按钮要盖掉 accent 蓝色，否则「检测中」看起来还能点。
@@ -728,7 +772,7 @@ QPushButton#flDetect:disabled {
 }
 
 #flDropTitle {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: @text;
     background: transparent;
@@ -775,7 +819,6 @@ QTableWidget#flTable QTableCornerButton::section {
 
 QPushButton#flRowAction {
     padding: 2px 10px;
-    min-height: 0px;
     font-size: 12px;
     color: @danger;
     border-color: @border-danger;
@@ -857,14 +900,13 @@ QMenu::separator {
 /* 双栏正文比全局 13px 稍大：翻译是纯阅读场景，字号小写久了累。
    其余外观（白底、圆角、边框、选中色）沿用全局 QPlainTextEdit 规则。 */
 QPlainTextEdit#transPane {
-    font-size: 14px;
+    font-size: 15px;
 }
 
 /* 语言交换按钮是 34px 宽的小方块，必须清掉全局 QPushButton 的 padding，
    否则箭头被挤成一个点（标题栏按钮踩过同一个坑）。 */
 QPushButton#transSwap {
     padding: 0px;
-    min-height: 0px;
     font-size: 15px;
 }
 
@@ -904,7 +946,7 @@ QPushButton#transSwap {
 /* 右侧格式卡：与设置页 QGroupBox / 内存概览卡同一套白底细边框观感。
    QWidget 子类必须显式开 WA_StyledBackground 才会绘制 qss 背景（见 ColorPickerPanel）。 */
 #cpCard {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
 }
@@ -941,7 +983,6 @@ QLineEdit#cpFieldValue {
 QPushButton#cpCopyBtn,
 QPushButton#cpSmallBtn {
     padding: 0px;
-    min-height: 0px;
     font-size: 11px;
 }
 
@@ -985,7 +1026,6 @@ QLineEdit#cronExpr {
 
 QPushButton#cronCopyBtn {
     padding: 0px;
-    min-height: 0px;
     font-size: 12px;
 }
 
@@ -1019,7 +1059,6 @@ QPushButton#cronCopyBtn {
 /* 预设按钮：全局 QPushButton 的 padding 会把 8 宫格挤高，小按钮清零 */
 QPushButton#cronPresetBtn {
     padding: 3px 6px;
-    min-height: 0px;
     font-size: 12px;
 }
 
@@ -1032,7 +1071,6 @@ QLineEdit#cronField {
 /* 可视化字段编辑：字段 chips（双行「名 + 原文」，选中深青） */
 QPushButton#cronFieldChip {
     padding: 2px 4px;
-    min-height: 0px;
     font-size: 11px;
     border: 1px solid @border;
     border-radius: 8px;
@@ -1067,7 +1105,6 @@ QRadioButton#cronKindRadio {
 /* 值网格按钮：选中态用同一套深青，扫一眼就知道勾了哪些 */
 QPushButton#cronValueBtn {
     padding: 2px;
-    min-height: 0px;
     font-size: 11px;
     border: 1px solid @border;
     border-radius: 6px;
@@ -1090,7 +1127,6 @@ QScrollArea#cronValuesScroll {
 /* 全选 / 清空 / 现在 一类小按钮 */
 QPushButton#cronMiniBtn {
     padding: 2px 8px;
-    min-height: 0px;
     font-size: 11px;
 }
 
@@ -1118,7 +1154,7 @@ QListWidget#cronNext::item:last {
 /* 地址卡与两张列表卡都是白底细边框，与内存概览卡 / 设置页同一套观感。
    QFrame 子类要 WA_StyledBackground 才画这里的背景（见 SharePanel.cpp）。 */
 #fsCard {
-    background: @bg;
+    background: @card;
     border: 1px solid @border;
     border-radius: 10px;
 }
@@ -1146,7 +1182,7 @@ QLineEdit#fsUrl {
     color: @accent;
     background: @bg-alt;
     border: 1px solid @border-subtle;
-    border-radius: 7px;
+    border-radius: 6px;
     padding: 5px 10px;
 }
 
@@ -1167,7 +1203,7 @@ QLineEdit#fsUrl {
     color: @success-text;
     background: @success-bg;
     border: 1px solid @success-border;
-    border-radius: 9px;
+    border-radius: 8px;
     padding: 2px 9px;
 }
 
@@ -1181,7 +1217,6 @@ QLineEdit#fsUrl {
    一排四个按钮会把卡片挤得只剩一条列表缝，这里显式缩小。 */
 QPushButton#fsMiniBtn {
     padding: 3px 9px;
-    min-height: 0px;
     font-size: 12px;
 }
 
@@ -1190,7 +1225,6 @@ QPushButton#fsMiniBtn {
    这里把它去掉 —— 文案「切换」本身已经说明了行为。 */
 QPushButton#fsSwitch {
     padding: 4px 10px;
-    min-height: 0px;
     font-size: 12px;
 }
 

@@ -1,4 +1,5 @@
 #include "MemePanel.h"
+#include "LayoutMetrics.h"
 
 #include <QAction>
 #include <QApplication>
@@ -182,7 +183,7 @@ void MemePanel::buildUi()
     auto *root = new QVBoxLayout(this);
     // 左右 28px 与宿主页头对齐（所有插件面板的统一约定）；别在这里写标题，
     // 页头由宿主提供，重复写会出现两个标题。
-    root->setContentsMargins(28, 0, 28, 20);
+    root->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     root->setSpacing(10);
 
     // ---- 搜索行

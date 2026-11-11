@@ -1,6 +1,7 @@
 #include "HomePage.h"
 
 #include "IconBadge.h"
+#include "LayoutMetrics.h"
 #include "LocalAppIndex.h"
 #include "PluginManager.h"
 #include "QuickCalc.h"
@@ -34,8 +35,8 @@
 
 namespace {
 
-// 首页布局常量。与 MainWindow 的页头左右留白保持一致（28），换页时标题不会跳。
-constexpr int kPageMargin = 28;
+// 首页布局常量。左右留白统一走 xtools::layout::kPageMargin（与 MainWindow 页头一致，
+// 换页时标题不会跳），其余磁贴尺寸是首页私有的，留在这里。
 constexpr int kTileWidth = 104;
 constexpr int kTileHeight = 100;
 constexpr int kTileIcon = 48;
@@ -386,7 +387,7 @@ void HomePage::buildUi()
     m_top = new QWidget(this);
     m_top->setObjectName(QStringLiteral("homeTop"));
     auto *topLayout = new QHBoxLayout(m_top);
-    topLayout->setContentsMargins(kPageMargin, 18, kPageMargin, 6);
+    topLayout->setContentsMargins(xtools::layout::kPageMargin, 18, xtools::layout::kPageMargin, 6);
     topLayout->setSpacing(0);
 
     m_search = new QLineEdit(m_top);
@@ -447,7 +448,7 @@ void HomePage::buildUi()
     m_content = new QWidget;
     m_content->setObjectName(QStringLiteral("homeContent"));
     auto *contentLayout = new QVBoxLayout(m_content);
-    contentLayout->setContentsMargins(kPageMargin, 4, kPageMargin, 16);
+    contentLayout->setContentsMargins(xtools::layout::kPageMargin, 4, xtools::layout::kPageMargin, 16);
     contentLayout->setSpacing(2);
     m_scroll->setWidget(m_content);
 
@@ -547,7 +548,7 @@ void HomePage::buildUi()
     // 页脚左右留白挪到这层布局上（qss 的 #homeFooter 不再带 padding），
     // 这样两块文字共用同一条基线与左右边界。
     auto *footerRow = new QHBoxLayout;
-    footerRow->setContentsMargins(kPageMargin, 4, kPageMargin, 10);
+    footerRow->setContentsMargins(xtools::layout::kPageMargin, 4, xtools::layout::kPageMargin, 10);
     footerRow->setSpacing(12);
     footerRow->addWidget(m_footer);
     footerRow->addStretch(1);
@@ -1006,7 +1007,7 @@ void HomePage::updateFooter()
 
 int HomePage::columnsFor(int viewportWidth) const
 {
-    const int avail = viewportWidth - 2 * kPageMargin - kScrollbarReserve;
+    const int avail = viewportWidth - 2 * xtools::layout::kPageMargin - kScrollbarReserve;
     return qMax(1, (avail + kGridSpacing) / (kTileWidth + kGridSpacing));
 }
 

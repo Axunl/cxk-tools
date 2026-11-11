@@ -1,7 +1,8 @@
 #include "Md5Tool.h"
 
 #include "Md5Logic.h"        // 纯摘要逻辑（UTF-8 字节、16 位截断、HMAC-MD5、比对）
-#include "ThemePalette.h"     // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"     // 颜色令牌（宿主与插件共用）
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -241,7 +242,7 @@ public:
     {
         auto *layout = new QVBoxLayout(this);
         // 左右 28px 与主窗口页头对齐，视觉上像同一栏
-        layout->setContentsMargins(28, 0, 28, 20);
+        layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
         layout->setSpacing(10);
 
         m_tabs = new QTabWidget(this);

@@ -1,6 +1,7 @@
 #include "SettingsPage.h"
 
 #include "ITool.h"
+#include "LayoutMetrics.h"
 #include "Log.h"
 #include "PluginManager.h"
 #include "Settings.h"
@@ -17,6 +18,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStyle>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -169,8 +171,24 @@ SettingsPage::SettingsPage(Settings *settings, PluginManager *plugins, QWidget *
     , m_settings(settings)
     , m_plugins(plugins)
 {
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(28, 20, 28, 24);
+    // 设置页包一层滚动区：四个分组 + 边距在窄窗口 / 高 DPI 下可能超过主窗口最小高度
+    // （580），不滚动的话「关于」组会被直接裁掉。滚动区只在内容放不下时才出现滚动条，
+    // 平时视觉上和以前直接堆叠一样（透明底、无边框）。
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+
+    auto *scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("settingsScroll"));
+    scroll->setWidgetResizable(true);            // 内容宽度跟随 viewport，否则横向也会出现滚动条
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto *content = new QWidget(scroll);
+    content->setObjectName(QStringLiteral("settingsContent"));
+
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 20, xtools::layout::kPageMargin, 24);
     layout->setSpacing(16);
 
     layout->addWidget(buildGeneralGroup());
@@ -178,6 +196,9 @@ SettingsPage::SettingsPage(Settings *settings, PluginManager *plugins, QWidget *
     layout->addWidget(buildUpdateGroup());
     layout->addWidget(buildAboutGroup());
     layout->addStretch(1);
+
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
 }
 
 QWidget *SettingsPage::buildGeneralGroup()

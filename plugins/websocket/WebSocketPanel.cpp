@@ -1,6 +1,7 @@
 #include "WebSocketPanel.h"
 
-#include "ThemePalette.h"   // 颜色令牌（宿主与插件共用）
+#include "ThemePalette.h"
+#include "LayoutMetrics.h"   // 颜色令牌（宿主与插件共用）
 
 #include "WsProtocol.h"   // 纯协议逻辑（地址解析、子协议解析）
 #include "WsServer.h"     // 服务端连接层
@@ -790,7 +791,7 @@ WebSocketPanel::WebSocketPanel(QWidget *parent)
 {
     auto *layout = new QVBoxLayout(this);
     // 左右 28px 与主窗口页头对齐
-    layout->setContentsMargins(28, 0, 28, 20);
+    layout->setContentsMargins(xtools::layout::kPageMargin, 0, xtools::layout::kPageMargin, 20);
     layout->setSpacing(10);
 
     // 分段开关必须同父（autoExclusive 只在同一父控件的兄弟间互斥）

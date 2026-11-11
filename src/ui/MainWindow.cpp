@@ -2,10 +2,13 @@
 
 #include "HomePage.h"
 #include "IconBadge.h"
+#include "LayoutMetrics.h"
 #include "LocalAppIndex.h"
 #include "PluginManager.h"
 #include "Settings.h"
 #include "SettingsPage.h"
+#include "Theme.h"
+#include "ThemePalette.h"
 #include "ToolRegistry.h"
 #include "ToolWindow.h"
 #include "WindowGeometry.h"
@@ -15,6 +18,7 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
+#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -32,9 +36,16 @@ namespace {
 
 // 布局常量集中在这里：改一处即可，避免魔法数字散落
 constexpr int kTitleHeight = 46;
-constexpr int kPageMargin = 28;   ///< 页头与首页网格共用的左右留白，换页时标题不会跳
 constexpr int kDefaultWidth = 1120;
 constexpr int kDefaultHeight = 720;
+
+// 主窗口投影的留白与强度。无边框窗口没有系统阴影，圆角卡片会「贴」在桌面上，
+// 加一圈透明边距 + 投影让它浮起来。边距必须 >= blurRadius 的一半，否则阴影
+// 会被窗口边界裁掉（QGraphicsDropShadowEffect 画在控件矩形外，超出窗口的部分
+// 直接不可见）。
+constexpr int kShadowMargin = 16;
+constexpr int kShadowBlur = 24;
+constexpr int kShadowOffsetY = 4;
 
 /// 标题栏「两下」允许的位置误差（像素）。手抖几个像素仍算同一处；
 /// 挪动明显了就不算 —— 否则「拖一下窗口，再点一下标题栏」会被误判成双击。
@@ -53,6 +64,10 @@ MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager
     // 无边框 + 自绘标题栏（与 uTools 那类工具面板观感一致）。
     // 拖动靠 QWindow::startSystemMove()，缩放靠 QSizeGrip，都是跨平台 API。
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+    // 透明背景：让 centralWidget 外面的投影留白区露出桌面，而不是黑边。
+    // 代价是 Windows 上会关掉 DWM 原生阴影、走合成路径（拖动可能轻微闪烁），
+    // 详见 buildUi 里投影那段注释。
+    setAttribute(Qt::WA_TranslucentBackground, true);
     setWindowTitle(QStringLiteral("CXK 工具箱"));
     setMinimumSize(920, 580);
 
@@ -62,13 +77,56 @@ MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager
 
     buildUi();
     showHome();   // 启动就停在首页网格
+
+    // 投影颜色不读样式表，得在换肤时手动刷新（Theme::apply 结束发 themeChanged）。
+    // 这里连一次，后续每次切浅/深都跟着更新，否则深色下仍挂着浅色投影。
+    connect(&Theme::instance(), &Theme::themeChanged, this, [this] {
+        if (m_shadow)
+            m_shadow->setColor(shadowColor());
+    });
+}
+
+QColor MainWindow::shadowColor() const
+{
+    // Shadow 令牌给基色（浅 #0F172A / 深 #000000），透明度按主题区分：
+    // 浅色底上用偏淡的投影更柔和，深色底上要更不透明才看得出层次。
+    QColor color = xtools::theme::color(xtools::theme::Color::Shadow);
+    color.setAlpha(xtools::theme::isDark() ? 180 : 90);
+    return color;
 }
 
 void MainWindow::buildUi()
 {
-    auto *root = new QWidget(this);
+    // 投影结构：centralWidget 是一个透明「投影宿主」（shadowHost），四周留 kShadowMargin
+    // 的透明边距；真正的界面 root（mainRoot，带圆角白底）作为它的子控件放在中间，
+    // 并对 root 挂 QGraphicsDropShadowEffect 画出投影。这样圆角窗口在桌面上有立体感，
+    // 而不是无边框下「贴」着桌面。
+    //
+    // 跨平台说明：QGraphicsDropShadowEffect 三端行为一致、无需原生分支；但 Windows 上
+    // WA_TranslucentBackground 会关闭 DWM 原生阴影、改走软件合成，拖拽/缩放时可能轻微
+    // 闪烁或掉帧。若真机实测不可接受，回退方案是三端各写原生阴影分支（DWM / NSWindow /
+    // X11），此处留纯效果实现，宁可简洁也不要未经验证的原生代码。
+    auto *shadowHost = new QWidget(this);
+    shadowHost->setObjectName(QStringLiteral("mainShadowHost"));
+    shadowHost->setAttribute(Qt::WA_TranslucentBackground, true);
+    setCentralWidget(shadowHost);
+
+    auto *hostLayout = new QVBoxLayout(shadowHost);
+    hostLayout->setContentsMargins(kShadowMargin, kShadowMargin, kShadowMargin, kShadowMargin);
+    hostLayout->setSpacing(0);
+
+    auto *root = new QWidget(shadowHost);
     root->setObjectName(QStringLiteral("mainRoot"));
-    setCentralWidget(root);
+
+    // 投影：颜色走 Shadow 令牌（浅深两套），透明度由主题决定。颜色会在换肤时
+    // （Theme::themeChanged）刷新，见构造末尾的 connect。
+    m_shadow = new QGraphicsDropShadowEffect(root);
+    m_shadow->setBlurRadius(kShadowBlur);
+    m_shadow->setOffset(0, kShadowOffsetY);
+    m_shadow->setColor(shadowColor());
+    root->setGraphicsEffect(m_shadow);
+
+    hostLayout->addWidget(root);
 
     auto *rootLayout = new QVBoxLayout(root);
     rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -97,17 +155,20 @@ void MainWindow::buildUi()
     // 设置入口：侧边栏取消后没有别的常驻入口了（只剩托盘菜单），补一个齿轮
     auto *settingsBtn = new QPushButton(QStringLiteral("\u2699"), m_titleBar);   // ⚙
     settingsBtn->setObjectName(QStringLiteral("titleBtnSettings"));
+    settingsBtn->setProperty("compact", true);
     settingsBtn->setFixedSize(30, 28);
     settingsBtn->setCursor(Qt::PointingHandCursor);
     settingsBtn->setToolTip(QStringLiteral("设置"));
 
     auto *minBtn = new QPushButton(QStringLiteral("\u2014"), m_titleBar);   // —
     minBtn->setObjectName(QStringLiteral("titleBtn"));
+    minBtn->setProperty("compact", true);
     minBtn->setFixedSize(30, 28);
     minBtn->setCursor(Qt::PointingHandCursor);
 
     auto *closeBtn = new QPushButton(QStringLiteral("\u2715"), m_titleBar);   // ✕
     closeBtn->setObjectName(QStringLiteral("titleBtnClose"));
+    closeBtn->setProperty("compact", true);
     closeBtn->setFixedSize(30, 28);
     closeBtn->setCursor(Qt::PointingHandCursor);
 
@@ -135,7 +196,7 @@ void MainWindow::buildUi()
     m_pageHeader = new QWidget(column);
     m_pageHeader->setObjectName(QStringLiteral("pageHeader"));
     auto *headerLayout = new QHBoxLayout(m_pageHeader);
-    headerLayout->setContentsMargins(kPageMargin, 14, kPageMargin, 10);
+    headerLayout->setContentsMargins(xtools::layout::kPageMargin, 14, xtools::layout::kPageMargin, 10);
     headerLayout->setSpacing(12);
 
     m_pageBack = new QPushButton(QStringLiteral("\u2190  首页"), m_pageHeader);
@@ -175,8 +236,10 @@ void MainWindow::buildUi()
     columnLayout->addWidget(m_stack, 1);
     rootLayout->addWidget(column, 1);
 
-    // 无边框窗口右下角的缩放抓手（QSizeGrip 在 resizeEvent 里重新定位）
-    new QSizeGrip(root);
+    // 无边框窗口右下角的缩放抓手（QSizeGrip 在 resizeEvent 里重新定位）。
+    // 挂在 shadowHost 而不是 root：root 挂了投影 effect，抓手若也挂在 root 上
+    // 会被投影「糊」一圈；挂宿主则贴着窗口真实右下角，不受投影影响。
+    new QSizeGrip(shadowHost);
 
     connect(m_pageBack, &QPushButton::clicked, this, &MainWindow::showHome);
     connect(m_popoutBtn, &QPushButton::clicked, this, [this] { popOutTool(m_currentToolId); });
@@ -537,9 +600,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
     // QSizeGrip 不会自己跟着右下角走（它按布局定位，而这里是绝对定位），
     // 每次尺寸变化手动贴到右下角。恢复窗口几何后也依赖这里重新摆。
+    // 抓手挂在 shadowHost（铺满整个窗口）上，而真正的圆角卡片 root 四周留了
+    // kShadowMargin 的投影边距，所以右下角要往回收 kShadowMargin，让抓手落在
+    // 卡片右下角而不是透明阴影区。
     if (auto *grip = findChild<QSizeGrip *>()) {
         grip->resize(16, 16);
-        grip->move(width() - 18, height() - 18);
+        grip->move(width() - kShadowMargin - 18, height() - kShadowMargin - 18);
         grip->raise();
     }
 }
