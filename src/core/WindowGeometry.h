@@ -50,4 +50,27 @@ inline bool restore(QWidget *w, const QByteArray &geo, const QSize &fallbackSize
     return false;
 }
 
+/// 把窗口移到 topLeft（frame 左上角），并保证整块仍落在屏幕可用区域内：
+/// 贴右/下边时向内收，窗口比可用区域还大时贴住左上。
+/// 用于「没有历史几何」的场景 —— 例如独立窗口首次弹出时跟随主窗口当前位置，
+/// 而不是跳到主屏中央（那样用户会觉得窗口是「凭空冒出来」的）。
+inline void placeAt(QWidget *w, const QPoint &topLeft)
+{
+    const QSize frameSize = w->frameGeometry().size();
+    const QScreen *screen = QGuiApplication::screenAt(QRect(topLeft, frameSize).center());
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+    const QRect avail = screen->availableGeometry();
+    // 可用区域比窗口还小时钳不动，固定贴左上（与 restore 的兜底同策略）
+    const int maxLeft = qMax(avail.left(), avail.right() - frameSize.width() + 1);
+    const int maxTop = qMax(avail.top(), avail.bottom() - frameSize.height() + 1);
+    // move() 用 client 坐标，move 前后 frame 与 client 的偏移是常量，先量出来再减
+    const QPoint frameOffset = w->frameGeometry().topLeft() - w->geometry().topLeft();
+    w->move(QPoint(qBound(avail.left(), topLeft.x(), maxLeft),
+                   qBound(avail.top(), topLeft.y(), maxTop))
+            - frameOffset);
+}
+
 } // namespace WindowGeometry

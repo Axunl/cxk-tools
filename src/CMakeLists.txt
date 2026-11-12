@@ -34,6 +34,8 @@ set(APP_SOURCES
     core/UpdateInfo.h
     core/WindowGeometry.h
 
+    ui/FindBar.cpp
+    ui/FindBar.h
     ui/HomePage.cpp
     ui/HomePage.h
     ui/MainWindow.cpp

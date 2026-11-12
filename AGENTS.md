@@ -193,6 +193,8 @@ cxk-tools/
 │   │   ├── MainWindow.*        自绘标题栏 + 页头 + QStackedWidget（首页/设置/工具）
 │   │   ├── HomePage.*          首页：搜索框 + 「最近使用 / 全部 / 本机应用」磁贴网格
 │   │   ├── ToolWindow.*        单个工具的独立窗口（每工具最多一个）
+│   │   ├── FindBar.*           宿主给所有插件面板提供的通用 Ctrl+F 查找条
+│   │   │                       （attach 到面板，幂等；qApp 级过滤器拦 Ctrl+F）
 │   │   ├── SettingsPage.*      热键录制、开机自启、插件加载状态、检查更新
 │   │   ├── UpdateDialog.*      更新对话框：版本对比 + release notes + 下载进度
 │   │   └── TrayController.*    托盘图标与右键菜单

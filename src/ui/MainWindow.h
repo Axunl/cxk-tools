@@ -15,7 +15,9 @@
 //     因为 qApp->quit() 不会给窗口发 closeEvent）。
 //   * 「弹独立窗口」是**搬**不是**抄**：工具页里点页头「独立窗口」或双击标题栏，
 //     当前内嵌面板会整块移交给独立窗口（同一个 QWidget 实例），正在编辑的内容、
-//     光标、撤销栈、滚动位置全部原样过去，然后主窗口回到首页。详见 popOutTool()。
+//     光标、撤销栈、滚动位置全部原样过去，然后主窗口**收起**——弹出即把工作区
+//     交给那个窗口，两个窗口同时在场只会互相抢焦点。最后一个独立窗口关掉时
+//     主窗口再回来（前提是它当初就是为弹窗收起的）。详见 popOutTool()。
 //   * 关闭按钮与 Esc 语义：首页 → 收进托盘；工具页/设置页 → 先回首页。
 //     真正退出必须先 prepareQuit()，否则会被 closeEvent 拦下。
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ class ToolRegistry;
 class ToolWindow;
 class QGraphicsDropShadowEffect;
 class QLabel;
+class QPropertyAnimation;
 class QPushButton;
 class QStackedWidget;
 class QWidget;
@@ -65,7 +68,8 @@ public:
     /// 把工具弹成独立窗口。已有该工具的窗口时不新建，只前台化。
     ///
     /// 若该工具此刻正以内嵌面板的形式显示在主窗口里，面板会被**移交**给独立窗口
-    /// （不是重新 createPanel），所以用户正在编辑的内容不会丢；移交后主窗口回首页。
+    /// （不是重新 createPanel），所以用户正在编辑的内容不会丢；移交后主窗口收起，
+    /// 关掉最后一个独立窗口时再回来。
     void popOutTool(const QString &toolId);
 
     void showSettings();
@@ -120,6 +124,17 @@ private:
     void closeAllToolWindows();
     void saveWindowState();
 
+    /// 弹出独立窗口后把主窗口收起（hide，不是 close：不销毁面板、不进托盘逻辑）。
+    void hideForPopout();
+    /// 最后一个独立窗口关掉时把主窗口还回来——只认「当初是为弹窗收起的」，
+    /// 用户自己收到托盘的窗口不会被别人的关闭动作翻出来。
+    /// 显示排在下一轮事件循环（等独立窗口真正从系统里消失），随后做一次淡入。
+    void restoreAfterPopout();
+    /// 由隐到显的一次淡入（windowOpacity 0→1，170ms）。
+    /// 桌面半透明窗口直接 show() 会「啪」地整块出现，在 Windows 上还可能先闪一帧
+    /// 未合成的底色；淡入把这两件事都盖掉。热键/托盘唤出不走这里（要即时响应）。
+    void fadeIn();
+
     /// 当前主题下的投影颜色（浅色偏浅、深色更不透明）。换肤时随 Theme::themeChanged 刷新。
     QColor shadowColor() const;
 
@@ -147,6 +162,11 @@ private:
 
     QHash<QString, QPointer<ToolWindow>> m_toolWindows;   ///< 每工具最多一个独立窗口
     bool m_forceClose = false;
+    /// 主窗口当前是不是「为了弹独立窗口才收起的」。只有 true 时才在独立窗口全关后
+    /// 自动回来；用户自己关窗（收托盘）或热键唤出都会把它清掉。
+    bool m_hiddenForPopout = false;
+    /// 由隐到显的淡入动画（windowOpacity）。懒创建，见 fadeIn()。
+    QPropertyAnimation *m_fade = nullptr;
 
     /// 标题栏「两下」的自判定状态。为什么要自己算：第一次按下就把拖动交给了
     /// startSystemMove()，Windows 的原生移动循环会占住鼠标，随后的第二次按下

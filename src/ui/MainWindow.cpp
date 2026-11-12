@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "FindBar.h"
 #include "HomePage.h"
 #include "IconBadge.h"
 #include "LayoutMetrics.h"
@@ -18,16 +19,19 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEasingCurve>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSizeGrip>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -282,6 +286,10 @@ void MainWindow::createToolPanel(const QString &toolId, const xtools::ToolInput 
     m_stack->addWidget(panel);
     m_toolPanel = panel;
 
+    // 给面板挂通用查找条（Ctrl+F）：插件不用自己实现，独立窗口接管面板时
+    // 查找条作为面板子控件一起被搬走（attach 幂等，不会重复挂）。
+    FindBar::attach(panel);
+
     // 面板已创建、尚未显示：此时把首页带进来的内容交给插件正合适
     // （面板可以在 showEvent 里按已有内容排版/聚焦，用户看不到中间态）。
     if (input.kind == xtools::ToolInput::Kind::None)
@@ -402,13 +410,86 @@ void MainWindow::popOutTool(const QString &toolId)
     // 这样正在编辑的内容、光标、撤销栈、滚动位置、状态文案全部原样过去，插件零改动。
     QWidget *adopted = takeCurrentToolPanel(toolId);
 
-    auto *window = new ToolWindow(*entry, adopted, nullptr);
-    // WA_DeleteOnClose 会先析构窗口再发 destroyed，这里顺手把表项摘掉
-    connect(window, &QObject::destroyed, this, [this, toolId] { m_toolWindows.remove(toolId); });
+    // 主窗口的当前几何要**在收起之前**取：首次弹出时独立窗口照它落位
+    auto *window = new ToolWindow(*entry, adopted, nullptr, frameGeometry());
+    // WA_DeleteOnClose 会先析构窗口再发 destroyed，这里顺手把表项摘掉；
+    // 摘完再看一眼是不是最后一个——独立窗口全关掉时把主窗口还回来
+    connect(window, &QObject::destroyed, this, [this, toolId] {
+        m_toolWindows.remove(toolId);
+        restoreAfterPopout();
+    });
     m_toolWindows.insert(toolId, window);
     window->showAndRaise();
+    // 弹出即把工作区交给独立窗口：主窗口收起（连任务栏一起消失）。
+    // 两个窗口同时在场只会互相抢焦点，也会出现「谁盖住谁」的观感问题。
+    hideForPopout();
 
     markUsed(toolId);
+}
+
+void MainWindow::hideForPopout()
+{
+    // 主窗口本来就不可见（命令行 --popout、热键唤出前、或用户已收进托盘）时
+    // 只清标记、不做动作：那种情况下后面关独立窗口也不该把窗口翻出来。
+    if (!isVisible()) {
+        m_hiddenForPopout = false;
+        return;
+    }
+    m_hiddenForPopout = true;
+    // 正在淡入时又被弹窗打断：停掉动画并恢复全不透明，否则下次 show() 会带着
+    // 未完成的不透明度出现（半透明的一层）。
+    if (m_fade) {
+        m_fade->stop();
+        setWindowOpacity(1.0);
+    }
+    saveWindowState();   // 收起前落盘几何：下次唤出还是原来的位置
+    hide();
+}
+
+void MainWindow::restoreAfterPopout()
+{
+    // 还有独立窗口开着就不打扰；退出流程里更不能翻出窗口（会闪一下）
+    if (!m_hiddenForPopout || m_forceClose || !m_toolWindows.isEmpty())
+        return;
+    m_hiddenForPopout = false;
+
+    // 排到下一轮事件循环再显示。此刻还在独立窗口的 destroyed 信号里：那个窗口在
+    // 系统侧还没真正消失，此时 raise/activateWindow 会被 Windows 拒绝，结果是主窗口
+    // 先以「未激活」的样子出现、过一会儿标题栏才由灰变亮 —— 看着就是抖了一下。
+    QTimer::singleShot(0, this, [this] {
+        focusSearch();
+        fadeIn();
+    });
+}
+
+void MainWindow::fadeIn()
+{
+    // 淡入只在「由隐到显」的这条路径上做（关闭独立窗口后回来）。热键/托盘唤出
+    // 保持即时响应——那是一次按键换一次界面，等 150ms 反而像卡了。
+    constexpr int kFadeMs = 150;
+    // 起点不给 0：从完全透明起步时前几十毫秒屏幕上什么都没有，看着像「卡了一下
+    // 才出来」。从 0.25 起跳，窗口立刻可见，剩下的是收拢而不是浮现。
+    constexpr qreal kFadeFrom = 0.25;
+
+    if (!m_fade) {
+        m_fade = new QPropertyAnimation(this, "windowOpacity", this);
+        m_fade->setDuration(kFadeMs);
+        // OutCubic：开头涨得快、尾巴收得慢，观感上像「已经在了」而不是慢慢浮现
+        m_fade->setEasingCurve(QEasingCurve::OutCubic);
+        m_fade->setEndValue(1.0);
+        // 收尾强制回到完全不透明：动画被打断（期间又弹窗、退出程序）时窗口会停在
+        // 0.x，下次 show() 就是半透明的一层，用户只会觉得界面坏了。
+        connect(m_fade, &QPropertyAnimation::finished, this, [this] {
+            setWindowOpacity(1.0);
+        });
+    }
+
+    // 顺序要紧：先压到起点再 show 之前完成。fadeIn() 与 focusSearch() 同在一轮事件
+    // 循环里，Qt 要等回到事件循环才绘制第一帧，所以这里设低不会出现「先实后虚」。
+    m_fade->stop();
+    setWindowOpacity(kFadeFrom);
+    m_fade->setStartValue(kFadeFrom);
+    m_fade->start();
 }
 
 void MainWindow::closeAllToolWindows()
@@ -430,6 +511,17 @@ void MainWindow::saveWindowState()
 
 void MainWindow::focusSearch()
 {
+    // 用户主动把主窗口叫回来了：之后关掉独立窗口不该再"还原"一次（否则会把
+    // 焦点从用户手上抢走）。标记交给窗口状态决定，不在这里累积。
+    m_hiddenForPopout = false;
+
+    // 若正处在淡入中（关掉独立窗口后立刻按了热键）就收敛到全不透明：
+    // 用户按键要的是立刻出现，不是继续把动画看完。
+    if (m_fade) {
+        m_fade->stop();
+        setWindowOpacity(1.0);
+    }
+
     show();
     if (isMinimized())
         showNormal();
@@ -519,6 +611,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     destroyToolPanel();
     m_currentToolId.clear();
     saveWindowState();
+    // 用户自己收起窗口：这个状态与「弹窗时收起」无关，关独立窗口时别翻出来
+    m_hiddenForPopout = false;
     event->ignore();
     hide();
 }

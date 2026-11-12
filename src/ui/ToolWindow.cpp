@@ -1,5 +1,6 @@
 #include "ToolWindow.h"
 
+#include "FindBar.h"
 #include "Settings.h"
 #include "ToolRegistry.h"
 #include "WindowGeometry.h"
@@ -20,7 +21,8 @@ constexpr int kTopPadding = 12;
 
 } // namespace
 
-ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *panel, QWidget *parent)
+ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *panel, QWidget *parent,
+                       const QRect &anchorFrame)
     : QWidget(parent, Qt::Window)
     , m_toolId(entry.info.id)
 {
@@ -32,9 +34,16 @@ ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *panel, QWidget *parent)
     setWindowIcon(entry.icon);   // 任务栏/Alt+Tab 用工具自己的图标，多窗口时好认
     setMinimumSize(kMinWidth, kMinHeight);
 
-    WindowGeometry::restore(this,
-                            Settings::instance().windowGeometry(QStringLiteral("tool/") + m_toolId),
-                            QSize(kDefaultWidth, kDefaultHeight));
+    // 位置/大小按工具记忆：restore 成功说明用户之前摆过这个窗口，原样还回去，
+    // 之后任何逻辑都不再挪它（main 隐藏了，没人跟它抢位置）。
+    const bool restored = WindowGeometry::restore(
+        this, Settings::instance().windowGeometry(QStringLiteral("tool/") + m_toolId),
+        QSize(kDefaultWidth, kDefaultHeight));
+    // 只在「没有历史位置」时才挑落点：对齐主窗口当前位置（主窗口马上要收起，
+    // 窗口在原处"变大"比从屏幕中央冒出来自然得多）。anchorFrame 为空（磁贴右键 /
+    // 命令行 --popout / 主窗口本来就隐藏）时保持 restore 给的主屏居中。
+    if (!restored && anchorFrame.isValid())
+        WindowGeometry::placeAt(this, anchorFrame.topLeft());
 
     m_root = new QWidget(this);
     m_root->setObjectName(QStringLiteral("toolWindowRoot"));
@@ -64,6 +73,10 @@ ToolWindow::ToolWindow(const ToolEntry &entry, QWidget *panel, QWidget *parent)
     // 面板自身的布局、撤销栈、滚动位置都跟着走，不经过任何序列化。
     m_panel->setParent(m_root);
     rootLayout->addWidget(m_panel);
+
+    // 独立窗口也要能 Ctrl+F：接管来的面板在主窗口里已经挂过查找条（attach 幂等，
+    // 直接跳过），命令行 --popout / 磁贴右键新建的面板在这里挂上第一个。
+    FindBar::attach(m_panel);
 
     // 接管来的面板是被 removeWidget() 摘下来的，摘的时候 Qt 已经调过 hide()：
     // 那个"隐藏"状态会一直记在控件的 WA_WState_Hidden 上，父窗口 show() 也带不出来，
