@@ -1472,6 +1472,44 @@ add_subdirectory(plugins/mytool)
 - 不做音频、暂停 / 续录、摄像头画中画、多屏同时录制、跨屏框选（一次只录一块屏，与 OCR 一致）。
   面板不注册任何全局热键（全局热键只做「唤出首页搜索」）。
 
+## 内网穿透（`plugins/frpc`，插件内部）
+
+- 分层：`FrpcText.h`（**纯逻辑 header**：TOML/INI 格式嗅探、行级配置校验、服务端地址提取、
+  日志分级、时长格式化，可单独断言）、`FrpcStore.*`（多份配置档的 JSON 存档）、
+  `FrpcRunner.*`（进程服务 + 可执行文件定位）、`FrpcPanel.*`（界面）、`FrpcTool.*`（入口）。
+- **进程服务是模块级单例，不是面板成员**（与 screenrec 的 `RecordService` 同一个理由）：
+  宿主「面板不缓存、离开即销毁」，进程挂在面板上会让用户切个工具就断掉穿透。
+  `Service::instance()` 用函数内 `static new`，不挂 `qApp` 名下；面板只 `connect` 信号、只读状态。
+- **刻意不做 detached + pid 文件**：那样能「关掉工具箱也继续跑」，但会留下无人认领的后台网络服务
+  （用户看不见、关不掉、下次撞端口）。现在 `aboutToQuit` 里直接 `kill()`，行为可解释。
+  需要常驻的用户应该用系统服务，README 里已写明。
+- **Windows 停止只能 `kill()`**：`QProcess::terminate()` 是往目标进程的窗口投 WM_CLOSE，frpc 是
+  控制台程序、没有消息循环，投了没用。POSIX 侧反过来：先 `SIGTERM`，4 秒不退再 `SIGKILL`
+  （`m_forceKillTimer`），期间状态是 `Stopping`，面板把停止按钮置灰，避免连点。
+- **配置必须落盘再启动**：frpc 只接受 `-c <文件>`，没有 stdin 入口。写文件用 `QSaveFile`
+  （原子的），扩展名跟着内容格式走（`frpc.toml` / `frpc.ini`），否则 frpc 会挑错解析器。
+- **工作目录设成 frpc 所在目录**：frpc 会按相对路径找证书等文件，用工具箱自己的 cwd 会让它们
+  落到意外位置。
+- 日志走 `MergedChannels` 合成一条流（分开读会把「导致错误的那行」和错误本身颠倒），
+  环形缓冲 4000 行、`since(index)` 返回增量；面板只显示 2000 行。`consume()` 必须处理**半行**
+  （一次 readAll 可能只收到半条），半行留在 `m_partial` 里等下一次，进程退出时补读一次。
+- **校验是行级启发式，故意不引 TOML 库**：需求只是「必填项在不在、端口像不像端口」，引库会把
+  「解析失败」和「用户配置写错」两类错误混在一起，还多一个编译依赖。限制写在 `FrpcText.h`
+  头部注释里：多行字符串、数组值的取值只判存在性。`log.to = file` 要查两种写法
+  （顶层 `log.to` 与 `[log]` 段的 `to`），漏掉后者的后果是「日志区永远空白」。
+- 校验只在**启动前**拦错误（`Error`）；`Warn` 不拦。缺 `remotePort`、名字重复这类算 `Error`，
+  因为 frpc 要么拒绝启动、要么启动了没人能连上。
+- `looksLikePort` 只认 1–65535 纯数字；`stripInlineComment` 必须跳过引号内的 `#` / `;`
+  （`auth.token = "a#b"` 是合法配置，切在 `#` 上会误报 token 为空）。
+- 面板状态全部在实例里（当前配置档、日志游标、`m_wasRunning`/`m_stopRequestedAtMs`），
+  宿主可能同时开内嵌与独立窗口两份面板；服务状态以 `Service` 为准，面板每秒重读。
+- 日志着色用 `QTextCharFormat`（不是 HTML），换肤时 `rebuildLogView()` 整块重画；
+  触发点是 `changeEvent(ThemeChange/PaletteChange)` **加上**每次刷新比对 `theme::isDark()` ——
+  宿主的自定义换肤不保证发 ThemeChange。
+- 已验证（Windows，用假 frpc 可执行文件端到端）：启动 / 读日志 / 已在跑时拒绝二次启动 /
+  主动停止 / 自然退出记录退出码 / `since()` 游标语义；`FrpcText.h` 有 20+ 条断言用例，
+  临时工程跑完即删（规则 2）。macOS / Linux 未实机验证，差异只在停止信号。
+
 ## 日志
 
 - 位置：`QStandardPaths::AppLocalDataLocation` 下的 `logs/app.log`（不可漫游目录，避免企业漫游配置同步日志）。
