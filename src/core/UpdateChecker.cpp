@@ -29,11 +29,13 @@ constexpr int kCheckIntervalHours = 24;
 /// 启动后多久开始静默检查：先让窗口画出来，别和首帧抢时间。
 constexpr int kStartupDelayMs = 3000;
 /// 清单只有一两 KB，但一次请求要经历 DNS + TCP + TLS 三轮往返，慢网/弱信号下
-/// 10 秒确实不够（会卡在握手上），这里放宽到 12 秒。
-constexpr int kFeedTimeoutMs = 12000;
-/// 清单最多试 2 次。只在"网络类"错误上重试：404、清单损坏是服务端状态，
+/// 10 秒确实不够（会卡在握手上）。2026-11-15 实测：同一条线路在 12 秒的两轮尝试里
+/// 全部超时、几十秒后再点又 1.4 秒就回来，说明瓶颈是代理/链路抖动而不是包大小。
+/// 放宽到 20 秒，把"第一次握手慢"这类抖动吃掉，代价只是多等几秒。
+constexpr int kFeedTimeoutMs = 20000;
+/// 清单最多试 3 次。只在"网络类"错误上重试：404、清单损坏是服务端状态，
 /// 再试一百次也一样，立刻把原因告诉用户才有用。
-constexpr int kFeedAttempts = 2;
+constexpr int kFeedAttempts = 3;
 /// 下载的空闲超时。注意 Qt 的 setTransferTimeout 是「多久没有新数据」就掐断
 /// （实测：1 秒超时也拦不住一个持续 3.5 秒、数据一直在流的下载），不是总时长上限。
 /// 三四十兆的包在慢网下跑十几分钟没问题；但运营商/代理常在二三十秒的停顿后才继续
@@ -274,7 +276,28 @@ void UpdateChecker::handleFeedFinished(QNetworkReply *reply, int generation)
         return;
     }
 
+    // 远端比本机还旧：几乎总是 GitHub 的 latest 指到了旧 tag（原因见头注释），
+    // 也可能 XTOOLS_UPDATE_FEED 指向了别的清单。对本机用户来说确实没得更新，
+    // 界面照旧显示「已是最新」，但日志里必须留下痕迹——否则这类问题只会表现成
+    // 「明明发了新版，检查更新却说没有」，连排查的入口都没有。
+    if (update::compareVersions(info.version, current) < 0) {
+        qWarning() << "UpdateChecker: 更新源版本低于本机" << info.version << "<" << current
+                   << "，请确认 Releases 里标记为 Latest 的是最新版本";
+    }
+
     emit upToDate(current);
+}
+
+bool UpdateChecker::isDownloading() const
+{
+    // m_retryPending 也算：断流后那 1~6 秒里没有任何 reply 挂着，但下载并没有结束，
+    // 这时候放行第二次 download() 会把同一个 .part 打开两次。
+    return m_downloadReply != nullptr || m_retryPending;
+}
+
+QString UpdateChecker::downloadingName() const
+{
+    return isDownloading() ? m_downloadAsset.name : QString();
 }
 
 void UpdateChecker::download(const update::Asset &asset)

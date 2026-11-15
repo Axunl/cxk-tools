@@ -6,6 +6,12 @@
 // 数据源：GitHub Releases 上的 latest.json（地址见 feedUrl()），不打 GitHub API，
 // 因此没有 60 次/小时的匿名限流，也不会因为仓库改名之外的原因中途失效。
 //
+// 代价是版本号完全取决于 GitHub 认为哪个 release 是「latest」——它按**发布时间**判定，
+// 不是按版本号大小。重跑/补发一个旧 tag 会让旧版本抢到 latest，于是大家（包括自己）
+// 永远只会被提示升级到那个旧版本。2026-11-15 就踩过一次：v0.10.0 比 v0.9.0 早发布
+// 一分钟，结果 releases/latest 一直指向 v0.9.0。CI 侧已加保护（release.yml 发布后
+// 显式把当前 tag 标成 latest，且不降级），本文件在清单版本比本机还旧时打日志便于定位。
+//
 // 分层约定：
 //   UpdateInfo.h   纯逻辑（比版本、解析清单），可离线断言
 //   UpdateChecker  网络 + 落盘 + 校验（本文件）
@@ -62,6 +68,22 @@ public:
     /// 静默运行安装器（Windows）。成功后调用方应当立即退出自己，
     /// 安装器收尾时会把新版本重新拉起来（见 .iss 的 [Run] 段）。
     static bool launchInstaller(const QString &filePath, QString *error);
+
+    /// 是否正有一次下载在跑（含断流后等待重连的那几秒）。
+    ///
+    /// 为什么必须暴露：下载跑在 UpdateChecker 上，对话框只是它的一个观察者。
+    /// 用户关掉对话框再点「检查更新」时，对话框会重新构造一次状态——如果它
+    /// 直接把自己当成"空闲"，按钮就变回「下载并安装」，点下去只会得到
+    /// 「上一个下载还没结束」。用户看到的就是"更新永远失败"，而其实下载还在跑。
+    bool isDownloading() const;
+
+    /// 正在下载的文件名（没在下就返回空）。对话框据此判断「接上的是不是同一个包」。
+    QString downloadingName() const;
+
+    /// 已落盘字节数 / 清单里写的总字节数（0 表示清单没给 size）。
+    /// 供对话框重开时把进度条直接画回当前位置，不用等下一次进度信号。
+    qint64 receivedBytes() const { return m_received; }
+    qint64 totalBytes() const { return m_total; }
 
 signals:
     void checking();

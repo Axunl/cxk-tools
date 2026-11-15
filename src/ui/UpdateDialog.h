@@ -13,6 +13,7 @@
 #include "UpdateInfo.h"
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QString>
 
 class UpdateChecker;
@@ -47,6 +48,17 @@ private:
     void setStatus(const QString &text, bool error = false);
     void updateButtons();
 
+    /// 把「已下载 / 总量 · 速度 · 剩余」写成一行并同步进度条。
+    ///
+    /// 为什么不能只显示百分比：安装包 29MB，在只跑得动 60KB/s 的线路上要八分钟，
+    /// 头一分钟一直停在 3%，用户根本分不清"在下"和"卡死"——这正是
+    /// 「检查更新每次都更新不了」的观感来源（2026-11-15 实测）。
+    void updateProgressText(qint64 received, qint64 total);
+    /// 重新打开对话框时接上 UpdateChecker 里可能还在跑的下载，返回是否接上了。
+    bool attachRunningDownload();
+    /// 测速窗口清零：新下载（或刚接上一段旧下载）时调用，别把两个包的时间混在一起。
+    void resetSpeedWindow();
+
     UpdateChecker *m_checker = nullptr;
     Settings *m_settings = nullptr;
 
@@ -64,4 +76,8 @@ private:
     QPushButton *m_laterButton = nullptr;
 
     bool m_downloading = false;
+
+    QElapsedTimer m_speedClock;   ///< 测速窗口的起点；无效表示还没收到第一个进度事件
+    qint64 m_speedBytes = 0;      ///< 窗口起点时已下载的字节数
+    double m_speed = 0.0;         ///< 平滑后的速度（字节/秒），0 表示还算不出来
 };

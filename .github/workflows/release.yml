@@ -337,3 +337,30 @@ jobs:
               --notes-file release-notes.md \
               --verify-tag
           fi
+
+      # 把本次 tag 显式标成「latest」，并且只在它不低于现有 latest 时才标。
+      #
+      # 为什么必须显式做：GitHub 的 latest 按**发布时间**判定，不是按版本号大小。
+      # 补发/重跑一个旧 tag 会把它顶成 latest，于是
+      # releases/latest/download/latest.json 变成旧清单，所有人的「检查更新」
+      # 都只会被提示升级到那个旧版本，而且界面上完全看不出问题
+      # （2026-11-15 实际踩过：v0.10.0 比 v0.9.0 早发布一分钟，latest 一直指 v0.9.0）。
+      # 反向保护同样重要：重跑旧 tag 修打包问题时，不能把 latest 往回拽。
+      - name: Mark release as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          VERSION="${TAG#v}"
+          CURRENT="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
+          if [ -n "$CURRENT" ]; then
+            HIGHEST="$(printf '%s\n%s\n' "${CURRENT#v}" "$VERSION" | sort -V | tail -n1)"
+            if [ "$HIGHEST" != "$VERSION" ]; then
+              echo "skip: $TAG 不高于现有 latest $CURRENT，保持不动"
+              exit 0
+            fi
+          fi
+          gh release edit "$TAG" --latest
+          echo "latest -> $TAG"
