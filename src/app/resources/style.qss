@@ -168,22 +168,15 @@ QScrollArea#settingsScroll {
     padding: 8px 0 4px 2px;
 }
 
-/* 磁贴：默认透明，hover / 键盘选中才出底色。
-   hover 用动态属性而不是 :hover —— QWidget 子类的 :hover 依赖样式引擎
-   主动打 WA_Hover，跨 Qt 版本/平台不保证触发（LauncherTile 里显式设属性）。 */
+/* 磁贴：默认透明。hover / 键盘选中的底色由 LauncherTile::paintEvent **自绘**，
+   不走 qss 动态属性 —— 动态属性要配 unpolish/polish 才生效，那一对调用会把磁贴
+   连同子控件重算样式并标脏几何，方向键连按时每步都重排一次，观感是「按了跟不上」。
+   因此这里只留静态约定（圆角尺寸与那 1px 透明边框：边框参与 contentsMargins，
+   删掉会让图标整体位移 1px）。配色令牌见 api/ThemePalette.h。 */
 #launcherTile {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 10px;
-}
-
-#launcherTile[hovered="true"] {
-    background: @accent-soft;
-}
-
-#launcherTile[current="true"] {
-    background: @accent-soft-strong;
-    border-color: @border-accent;
 }
 
 #tileName {
@@ -193,7 +186,9 @@ QScrollArea#settingsScroll {
 
 /* 数字键角标：磁贴左上角的 1~9，按对应数字直接打开这一项（见 HomePage 的
    eventFilter）。用 @bg 白底而不是半透明：磁贴选中时底色是 accent-soft-strong，
-   白块能明显浮起来；透明底会被压在选中色里看不清。 */
+   白块能明显浮起来；透明底会被压在选中色里看不清。
+   选中态提亮由 LauncherTile::setCurrent 用 theme::applyStyle 直接套到这个小标签上
+   （不依赖祖先选择器，理由同上：那需要刷新父控件的动态属性）。 */
 #tileShortcut {
     font-size: 11px;
     font-weight: 600;
@@ -201,12 +196,6 @@ QScrollArea#settingsScroll {
     background: @bg;
     border: 1px solid @border;
     border-radius: 6px;
-}
-
-/* 选中/悬停时角标跟着提亮一点，视线落在哪个磁贴上时序号也是可读的 */
-#launcherTile[current="true"] #tileShortcut {
-    color: @accent-text;
-    border-color: @border-accent;
 }
 
 /* 搜索建议条（IntentBanner）：贴进 JSON / 图片，或英文没搜到时的「交给哪个工具」。

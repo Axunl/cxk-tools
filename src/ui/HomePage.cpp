@@ -6,6 +6,7 @@
 #include "PluginManager.h"
 #include "QuickCalc.h"
 #include "Settings.h"
+#include "ThemePalette.h"
 #include "ToolRegistry.h"
 
 #include <QClipboard>
@@ -23,6 +24,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
@@ -40,6 +42,9 @@ namespace {
 constexpr int kTileWidth = 104;
 constexpr int kTileHeight = 100;
 constexpr int kTileIcon = 48;
+/// 磁贴圆角。自绘选中/悬停底色时用（见 LauncherTile::paintEvent），
+/// 必须与 qss 里 `#launcherTile` 的 border-radius 一致，否则圆角会「两套」。
+constexpr int kTileRadius = 10;
 constexpr int kTileIconTop = 12;      ///< 图标上方的呼吸空间
 constexpr int kTileSpacing = 6;       ///< 图标与名称之间
 constexpr int kGridSpacing = 8;       ///< 磁贴彼此间距
@@ -80,9 +85,8 @@ LauncherTile::LauncherTile(const LauncherItem &item, QWidget *parent)
     , m_icon(item.icon)
 {
     setObjectName(QStringLiteral("launcherTile"));
-    // QWidget 子类的 qss 背景必须靠 WA_StyledBackground 才绘制，
-    // 不设的话 hover/current 的底色完全看不到（只剩文字和图标）。
-    setAttribute(Qt::WA_StyledBackground, true);
+    // 不用 WA_StyledBackground：选中/悬停的底色在 paintEvent 里自绘（原因见那里），
+    // qss 只负责圆角尺寸这类静态约定，运行期不再依赖样式重算。
     setFixedSize(kTileWidth, kTileHeight);
     setCursor(Qt::PointingHandCursor);
 
@@ -145,11 +149,19 @@ void LauncherTile::setCurrent(bool on)
     if (m_current == on)
         return;
     m_current = on;
-    setProperty("current", on);
-    // 动态属性变了必须 unpolish/polish，qss 选择器才会重新求值
-    style()->unpolish(this);
-    style()->polish(this);
+    // 只重画，不 unpolish/polish：改动态属性后 Qt 要为这个磁贴**和它的子控件**
+    // 重算样式，还会把几何/尺寸提示标脏，方向键连按时每一步都要重排一次，
+    // 观感就是「按了跟不上」。底色改由 paintEvent 自己画，见那里的说明。
     update();
+
+    // 角标跟着提亮：qss 的祖先选择器（`#launcherTile[current=true] #tileShortcut`）
+    // 依赖动态属性刷新，而那正是上面要省掉的动作，所以这里直接给小角标换一套
+    // 内联样式。颜色仍然走令牌，换肤时 Theme 会重新套用这串模板。
+    if (m_shortcutNumber > 0) {
+        xtools::theme::applyStyle(m_shortcut,
+                                  on ? QStringLiteral("color: @accent-text; border-color: @border-accent;")
+                                     : QStringLiteral("color: @text-muted; border-color: @border;"));
+    }
 }
 
 void LauncherTile::setHovered(bool on)
@@ -157,10 +169,34 @@ void LauncherTile::setHovered(bool on)
     if (m_hovered == on)
         return;
     m_hovered = on;
-    setProperty("hovered", on);
-    style()->unpolish(this);
-    style()->polish(this);
-    update();
+    update();   // 同上：悬停也只是重画，不做样式重算
+}
+
+void LauncherTile::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+
+    // 没有状态就什么都不画：磁贴本身透明，露出首页底色。
+    if (!m_current && !m_hovered)
+        return;
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    // 选中态比 hover 深一档：hover 是「鼠标恰好路过」，选中是「回车就打开它」，
+    // 两者必须能一眼分开。色值全部走主题令牌，换肤时 Theme 会挨个 update()。
+    const QColor fill = xtools::theme::color(m_current ? xtools::theme::Color::AccentSoftStrong
+                                                      : xtools::theme::Color::AccentSoft);
+    // 内缩 0.5px：1px 的描边压在像素中心才不会糊成 2px 的灰边
+    const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+
+    painter.setBrush(fill);
+    if (m_current) {
+        painter.setPen(QPen(xtools::theme::color(xtools::theme::Color::BorderAccentStrong), 1.0));
+    } else {
+        painter.setPen(Qt::NoPen);
+    }
+    painter.drawRoundedRect(box, kTileRadius, kTileRadius);
 }
 
 void LauncherTile::updateNameText()
@@ -570,6 +606,7 @@ void HomePage::clearTiles()
     m_allTiles.clear();
     m_appTiles.clear();
     m_currentIndex = -1;
+    m_currentByUser = false;
 }
 
 void HomePage::rebuild()
@@ -599,6 +636,7 @@ void HomePage::rebuild()
         auto *tile = new LauncherTile(item, m_content);
         connect(tile, &LauncherTile::activated, this, &HomePage::toolActivated);
         connect(tile, &LauncherTile::popOutRequested, this, &HomePage::toolPopOutRequested);
+        connect(tile, &LauncherTile::activated, this, [this, tile] { selectTileFromMouse(tile); });
         bucket->append(tile);
     };
 
@@ -616,6 +654,7 @@ void HomePage::rebuild()
             if (m_apps)
                 m_apps->reveal(id);
         });
+        connect(tile, &LauncherTile::activated, this, [this, tile] { selectTileFromMouse(tile); });
         bucket->append(tile);
     };
 
@@ -700,6 +739,13 @@ void HomePage::rebuild()
 
     m_lastColumns = -1;   // 磁贴全换了，强制重新摆一次
     reflow();
+
+    // 默认选中第一个：呼出/输入即有落点，回车与方向键都从它起步。
+    // 但这**不算**用户手动挑过（m_currentByUser 保持 false），所以回车仍然优先
+    // 走建议条与就地求值 —— 见 activateCurrent 的两条短路。
+    if (!m_tiles.isEmpty())
+        setCurrentIndex(0);
+
     updateFooter();
 }
 
@@ -996,12 +1042,15 @@ void HomePage::updateFooter()
 
     // 提示跟着角标一起显隐：只有一个结果时回车就是它，提数字键反而是噪音；
     // 文案随「搜索框有没有字」变 —— 有字时裸数字是输入，必须按住 Ctrl 才是直选。
+    // 方向键提示只在有多项时才有意义（一项时上下左右没有可去的目标）。
     const bool numbered = m_tiles.size() >= 2;
     m_shortcutHint->setVisible(numbered);
     if (numbered) {
-        m_shortcutHint->setText(m_search->text().isEmpty()
-                                    ? QStringLiteral("数字键 1-9 直接打开")
-                                    : QStringLiteral("Ctrl+1-9 直接打开"));
+        const QString direct = m_search->text().isEmpty()
+            ? QStringLiteral("数字键 1-9 直接打开")
+            : QStringLiteral("Ctrl+1-9 直接打开");
+        // 把「方向键能选」写出来：高亮只有按下方向键才出现，不写用户不会知道
+        m_shortcutHint->setText(direct + QStringLiteral(" · 方向键选择"));
     }
 }
 
@@ -1103,6 +1152,10 @@ void HomePage::setCurrentIndex(int index)
 {
     if (m_tiles.isEmpty())
         return;
+    // 负数代表「这一项不在当前网格里」（例如点击后立刻重建过），不要钳到 0 上：
+    // 那会让高亮莫名其妙地跳到第一项。
+    if (index < 0)
+        return;
 
     index = qBound(0, index, m_tiles.size() - 1);
     if (m_currentIndex >= 0 && m_currentIndex < m_tiles.size())
@@ -1110,32 +1163,149 @@ void HomePage::setCurrentIndex(int index)
 
     m_currentIndex = index;
     m_tiles.at(index)->setCurrent(true);
-    m_scroll->ensureWidgetVisible(m_tiles.at(index), 8, 8);
+    scrollTileIntoView(m_tiles.at(index));
 }
 
-void HomePage::moveCurrent(int delta)
+void HomePage::scrollTileIntoView(LauncherTile *tile)
 {
-    if (m_tiles.isEmpty() || delta == 0)
+    if (!m_scroll || !tile)
         return;
-    if (m_currentIndex < 0)
-        setCurrentIndex(delta > 0 ? 0 : m_tiles.size() - 1);
-    else
-        setCurrentIndex(m_currentIndex + delta);
+
+    QWidget *viewport = m_scroll->viewport();
+    const QRect target(tile->mapTo(viewport, QPoint(0, 0)), tile->size());
+    const QRect visible = viewport->rect();
+
+    // 已经完整可见就什么都不做。以前每次移动都调 ensureWidgetVisible()，它会把
+    // 目标「贴到」视口边缘、还带一点内缩，于是每按一下滚动条都要微调几像素，
+    // 整片网格跟着挪一下 —— 视觉上就是抖，而不是一格格干净地跳。
+    if (visible.contains(target))
+        return;
+
+    QScrollBar *bar = m_scroll->verticalScrollBar();
+    int value = bar->value();
+    if (target.top() < visible.top())
+        value -= visible.top() - target.top();      // 目标在上方：滚到它顶边对齐
+    else if (target.bottom() > visible.bottom())
+        value += target.bottom() - visible.bottom(); // 目标在下方：滚到它底边对齐
+    bar->setValue(value);
+}
+
+void HomePage::selectTileFromMouse(LauncherTile *tile)
+{
+    if (!tile)
+        return;
+    const int index = m_tiles.indexOf(tile);   // 不在当前网格里时 indexOf 给 -1，会被忽略
+    if (index < 0)
+        return;
+    m_currentByUser = true;   // 鼠标点过 = 明确挑了这一项，回车按它走
+    setCurrentIndex(index);
+}
+
+QList<QList<LauncherTile *>> HomePage::tileGroups() const
+{
+    // 只列「真正显示出来」的组：空组在 rebuild() 里已被 hide()，把它算进导航
+    // 会让方向键停在一个看不见的位置上。
+    QList<QList<LauncherTile *>> groups;
+    if (!m_recentTiles.isEmpty())
+        groups.append(m_recentTiles);
+    if (!m_allTiles.isEmpty())
+        groups.append(m_allTiles);
+    if (!m_appTiles.isEmpty())
+        groups.append(m_appTiles);
+    return groups;
+}
+
+void HomePage::moveCurrentBy(int dRow, int dCol)
+{
+    if (m_tiles.isEmpty())
+        return;
+
+    // 从这一下起就是「用户自己挑的」：回车按选中项走，建议条与就地求值让位。
+    // 默认的「选中第一个」不设这个标记，否则回车永远只会打开第一项。
+    m_currentByUser = true;
+
+    const QList<QList<LauncherTile *>> groups = tileGroups();
+    if (groups.isEmpty())
+        return;
+
+    // 第一次按键只「点亮」不移动：往下/往右从第一项起，往上/往左从最后一项起。
+    // 这样按一下 ↑ 不会先跳到倒数第一项再往上（那一下就白按了）。
+    if (m_currentIndex < 0) {
+        setCurrentIndex((dRow < 0 || dCol < 0) ? m_tiles.size() - 1 : 0);
+        return;
+    }
+
+    // 定位当前项：先找它在哪个组，再换算成组内序号（m_tiles = 各组直接拼接）
+    int groupIndex = -1;
+    int groupStart = 0;
+    for (int i = 0; i < groups.size(); ++i) {
+        const int n = groups.at(i).size();
+        if (m_currentIndex >= groupStart && m_currentIndex < groupStart + n) {
+            groupIndex = i;
+            break;
+        }
+        groupStart += n;
+    }
+    if (groupIndex < 0)
+        return;   // 与 m_tiles 对不上（理论上不会发生），保守不动
+
+    // 左右：沿视觉顺序走一格，跨组时直接接到相邻组的第一项 / 最后一项。
+    // 分组只是视觉上的分隔，对「一格一格挪」的用户来说仍是一条连续的线。
+    if (dCol != 0) {
+        setCurrentIndex(qBound(0, m_currentIndex + dCol, m_tiles.size() - 1));
+        return;
+    }
+
+    const int columns = qMax(1, columnCount());
+    const int count = groups.at(groupIndex).size();
+    const int row = (m_currentIndex - groupStart) / columns;
+    const int col = (m_currentIndex - groupStart) % columns;
+    const int rows = (count + columns - 1) / columns;
+
+    if (dRow > 0) {
+        if (row + 1 < rows) {
+            // 同一组的下一行：列数对齐；下一行不满（末行）时退到它的最后一项，
+            // 否则按下键会落进空位、表现成「按了没反应」
+            setCurrentIndex(groupStart + qMin((row + 1) * columns + col, count - 1));
+            return;
+        }
+        // 到组尾：进下一组的第一行，列尽量对齐（那组不足一行时就是它的最后一项）
+        if (groupIndex + 1 < groups.size()) {
+            const int nextStart = groupStart + count;
+            setCurrentIndex(nextStart + qMin(col, groups.at(groupIndex + 1).size() - 1));
+        }
+        // 已经是整个网格的最后一行：原地不动，不做「回卷到顶部」
+        return;
+    }
+
+    if (row > 0) {
+        setCurrentIndex(groupStart + (row - 1) * columns + col);
+        return;
+    }
+    // 到组首：进上一组的最后一行，列尽量对齐（末行不满时退到它的最后一项）
+    if (groupIndex > 0) {
+        const int prevCount = groups.at(groupIndex - 1).size();
+        const int prevStart = groupStart - prevCount;
+        const int prevRows = (prevCount + columns - 1) / columns;
+        const int prevLastRowCount = prevCount - (prevRows - 1) * columns;
+        setCurrentIndex(prevStart + (prevRows - 1) * columns + qMin(col, prevLastRowCount - 1));
+    }
 }
 
 bool HomePage::activateCurrent()
 {
     // 就地求值优先于一切：答案已经摆在那行了，回车就是「把这个数拿走」，
     // 而不是替用户打开一个他并不需要的面板（这就是「不用打开面板」的落点）。
-    // 用方向键选过磁贴时不算 —— 那是用户明确要打开那一项。
-    if (!m_inlineValue.isEmpty() && m_currentIndex < 0) {
+    // 判据是「用户有没有自己挑过磁贴」，不是「当前下标是否有效」—— 首页默认就
+    // 选中第一项，用下标判断会让这两条捷径直接失效。
+    if (!m_inlineValue.isEmpty() && !m_currentByUser) {
         copyInlineResult();
         return true;
     }
 
     // 建议条优先：用户还没用方向键挑具体磁贴时，回车就是「按建议办」。
-    // 一旦按过方向键（m_currentIndex >= 0），说明他明确选中了某个磁贴，按磁贴走。
-    if (m_intentData.valid() && m_currentIndex < 0) {
+    // 一旦挑过（方向键或点击），说明他明确选中了某个磁贴，按磁贴走。
+    if (m_intentData.valid() && !m_currentByUser) {
         activateIntent();
         return true;
     }
@@ -1217,22 +1387,46 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
                     return true;
             }
 
+            // 方向键只在「裸按」时接管选中项：带 Shift/Ctrl/Alt 的组合留给
+            // QLineEdit（Ctrl+←/→ 是整词跳、Shift+←/→ 是扩选），抢走会让编辑失能。
+            // 比较前清掉 KeypadModifier：小键盘方向键会带这个标志。
+            const Qt::KeyboardModifiers arrowMods = ke->modifiers() & ~Qt::KeypadModifier;
+            const bool plainArrow = (arrowMods == Qt::NoModifier);
+
             switch (ke->key()) {
             case Qt::Key_Return:
             case Qt::Key_Enter:
                 activateCurrent();
                 return true;   // 没结果也吞掉，避免冒泡触发别处的默认动作
             case Qt::Key_Right:
-                moveCurrent(1);
+            case Qt::Key_Left: {
+                const bool forward = (ke->key() == Qt::Key_Right);
+                if (!plainArrow)
+                    break;   // Ctrl+←/→、Shift+←/→ 交回 QLineEdit
+                // 左右键同时是「移光标」和「换选中项」，按状态分：
+                //   * 用户已经自己挑过磁贴 → 正在挑东西，左右换项；
+                //   * 搜索框是空的 → 没有文字可编辑，左右直接换项；
+                //   * 光标还能往这个方向挪 → 先让它挪。改错字比换选中项急，
+                //     而且「挪到尽头再按一下」本来就是一句很自然的动作；
+                //   * 光标已经顶到头 → 这一下已经没有编辑意义，用来换项。
+                if (!m_currentByUser && !m_search->text().isEmpty()) {
+                    const int caret = m_search->cursorPosition();
+                    const int length = m_search->text().length();
+                    if (forward ? caret < length : caret > 0)
+                        break;   // 放行给 QLineEdit
+                }
+                moveCurrentBy(0, forward ? 1 : -1);
                 return true;
-            case Qt::Key_Left:
-                moveCurrent(-1);
-                return true;
+            }
             case Qt::Key_Down:
-                moveCurrent(columnCount());
+                if (!plainArrow)
+                    break;
+                moveCurrentBy(1, 0);
                 return true;
             case Qt::Key_Up:
-                moveCurrent(-columnCount());
+                if (!plainArrow)
+                    break;
+                moveCurrentBy(-1, 0);
                 return true;
             case Qt::Key_Escape:
                 if (m_search->text().isEmpty() && m_pendingImage.isNull())

@@ -16,6 +16,18 @@
 //   * 磁贴顺序 = 键盘导航顺序（最近 → 工具 → 应用），不做去重：同一项可能同时
 //     出现在两组里（与 uTools 一致），保持「下标 = 视觉位置」，否则方向键会跳到
 //     跟眼睛看到的不一致的地方。
+//   * 方向键导航按**二维网格**算，不是按下标加减：分组各自从第 0 行起排，跨组
+//     时的视觉位置与下标不连续（「最近使用」只剩半行时尤其明显）。见 moveCurrentBy。
+//   * 网格**默认选中第一项**（呼出、输入、重建之后都是），回车与方向键都有落点。
+//     但「默认选中」不等于「用户挑过」（m_currentByUser）：建议条与就地求值的回车
+//     优先权只按用户是否真的挑过算，否则回车永远只打开第一项。
+//   * 选中/悬停底色**自绘**（LauncherTile::paintEvent），不改动态属性、不做样式
+//     重算：unpolish/polish 会连子控件一起重算样式并把几何标脏，方向键连按时每一步
+//     都重排一次，观感是「按了跟不上」。
+//   * 左右键与文本编辑共用：光标还没顶到这个方向的尽头、又没进入导航时，左右键
+//     留给 QLineEdit 移光标；光标已经在尽头（或搜索框本来就空、或已用方向键选过
+//     磁贴）时，左右键才用来换选中项 —— 抢走编辑中的光标键，改一个错字都得先按 Home。
+//     带 Shift/Ctrl/Alt 的方向键一律不管（Ctrl+←/→ 整词跳、Shift+←/→ 扩选照常）。
 //   * 数字键直选（详见 handleShortcutNumber 的注释与 README）：结果有两个以上时，
 //     前 9 个磁贴按视觉顺序标 1~9；搜索框为空时裸数字直接打开第 N 项，搜索框有字
 //     时裸数字照常输入（不打断 base64 / 360 这类关键词），改用 Ctrl+数字直选。
@@ -70,9 +82,10 @@ struct LauncherItem
 
 /// 首页磁贴：一个 104×100 的方块，48px 图标 + 单行名称（超长省略）。
 ///
-/// 为什么自己画 hover/current 两次态而不是全靠 qss `:hover`：QWidget 子类的
-/// hover 依赖样式引擎主动打 WA_Hover，不同 Qt 版本/平台样式下不一定触发；
-/// 用动态属性 + repolish 是确定的。改这里时别把属性名和 qss 选择器改岔。
+/// 选中/悬停两次态由 paintEvent 自绘，不用 qss 动态属性：动态属性要配
+/// unpolish/polish 才会生效，而那一对调用会把磁贴连同子控件重算样式、顺带标脏
+/// 几何，方向键连按时每一步都触发一次重排 —— 这正是「选了不跟手」的来源。
+/// 自绘只花一次 update()，色值仍然走主题令牌，换肤时 Theme 会遍历 update()。
 class LauncherTile : public QWidget
 {
     Q_OBJECT
@@ -104,6 +117,7 @@ protected:
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     void setHovered(bool on);
@@ -172,8 +186,10 @@ public:
     /// 设置关键词（调试/命令行 --search 用），会触发重建并聚焦搜索框。
     void setSearchText(const QString &text);
 
-    /// 键盘导航：移动「当前项」delta 格（左右 ±1，上下 ±列数）。
-    void moveCurrent(int delta);
+    /// 键盘导航：在当前所在的二维网格上移动高亮项。
+    /// dRow 垂直方向 ±1 行（跨越多行），dCol 水平方向 ±1 格（沿视觉顺序线性走）。
+    /// 默认就选中第一项，所以按下方向键是「从第一项走到下一项」，不需要先点亮。
+    void moveCurrentBy(int dRow, int dCol);
 
     /// 键盘：打开当前高亮项；没有高亮时打开第一个。返回是否打开了某项。
     bool activateCurrent();
@@ -200,6 +216,17 @@ private:
     int columnsFor(int viewportWidth) const;
     void placeTiles(QGridLayout *grid, const QList<LauncherTile *> &tiles, int columns);
     void setCurrentIndex(int index);
+    /// 只在高亮项**不在视口里**时滚一次，且滚到刚好可见就停。
+    /// 不用 QScrollArea::ensureWidgetVisible：它每调用一次都会把目标贴到边缘（带内缩），
+    /// 于是每按一下方向键滚动条都微调几像素，整片网格跟着抖。
+    void scrollTileIntoView(LauncherTile *tile);
+    /// 鼠标点开某个磁贴时同步高亮：点完接着按方向键，起点就是刚点的这一项
+    /// （否则高亮停在上一次键盘位置，下一下就跳到看不见的地方）。
+    void selectTileFromMouse(LauncherTile *tile);
+    /// 非空分组按显示顺序列出（最近使用 → 全部 → 本机应用）。
+    /// 与 m_tiles 的拼接顺序完全一致，所以「组内序号 + 各组长度偏移」就能换算出
+    /// m_tiles 下标 —— 方向键导航要靠它算「这一行的相邻项是谁」。
+    QList<QList<LauncherTile *>> tileGroups() const;
     void updateFooter();
     void showEmptyState(bool empty);
 
@@ -278,5 +305,8 @@ private:
     QList<LauncherTile *> m_allTiles;
     QList<LauncherTile *> m_appTiles;
     int m_currentIndex = -1;
+    /// 「用户自己挑过磁贴」：方向键移动或点击后置 true，重建（打字/清空/唤出）时复位。
+    /// 回车优先级靠它判断，不能靠 m_currentIndex —— 默认就选中第一项，下标永远有效。
+    bool m_currentByUser = false;
     int m_lastColumns = -1;   ///< 列数没变就不重排，避免拖动窗口时反复闪
 };

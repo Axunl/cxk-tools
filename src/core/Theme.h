@@ -57,7 +57,7 @@ public:
 
 signals:
     /// 主题已落地（每次 apply 结束发一次）。给不依赖 qss、需要手工取色的地方用，
-    /// 例如主窗口的投影（QGraphicsDropShadowEffect 的颜色不读样式表，得手动刷新）。
+    /// 例如主窗口的投影（预渲染位图的颜色不读样式表，得手动重建，见 ShadowPlate）。
     void themeChanged();
 
 private:

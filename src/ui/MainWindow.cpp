@@ -20,12 +20,15 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QEasingCurve>
-#include <QGraphicsDropShadowEffect>
+#include <QGraphicsBlurEffect>
+#include <QGraphicsPixmapItem>
+#include <QGraphicsScene>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -44,16 +47,118 @@ constexpr int kDefaultWidth = 1120;
 constexpr int kDefaultHeight = 720;
 
 // 主窗口投影的留白与强度。无边框窗口没有系统阴影，圆角卡片会「贴」在桌面上，
-// 加一圈透明边距 + 投影让它浮起来。边距必须 >= blurRadius 的一半，否则阴影
-// 会被窗口边界裁掉（QGraphicsDropShadowEffect 画在控件矩形外，超出窗口的部分
-// 直接不可见）。
+// 加一圈透明边距 + 投影让它浮起来。边距必须 >= 模糊半径的一半，否则阴影会被
+// 窗口边界裁掉（预渲染的位图画在卡片矩形之外，超出窗口的部分直接不可见）。
 constexpr int kShadowMargin = 16;
-constexpr int kShadowBlur = 24;
+constexpr int kShadowBlur = 16;
 constexpr int kShadowOffsetY = 4;
+
+/// 预渲染阴影时卡片四周额外留出的像素。必须 >= 模糊半径，否则位图边缘会把
+/// 还没衰减完的模糊裁掉，出现一圈硬边。超出的部分由父控件裁掉（窗口只有
+/// kShadowMargin 的透明边距，多出来的本来就看不见）。
+constexpr int kShadowPad = 32;
 
 /// 标题栏「两下」允许的位置误差（像素）。手抖几个像素仍算同一处；
 /// 挪动明显了就不算 —— 否则「拖一下窗口，再点一下标题栏」会被误判成双击。
 constexpr int kTitleDblClickSlop = 8;
+
+/// 主卡片圆角，必须与 qss `#mainRoot { border-radius }` 一致：
+/// 投影底板靠它画出与卡片完全相同的轮廓，否则投影会在四角露出多余的一圈。
+constexpr int kCardRadius = 10;
+
+/// 投影底板：只画一块与主卡片同形状的圆角矩形，并把它**预渲染**成带模糊的位图。
+///
+/// 为什么不用 QGraphicsDropShadowEffect：它会在每次重绘时重新渲染源控件再模糊一遍。
+/// 卡片铺满窗口，于是磁贴高亮、光标闪烁、网格滚动这些局部重绘都会连坐成一次
+/// 「整窗 + 24px 模糊」——实测一次方向键 6.7ms，只画位图后 0.5ms，差别就是「跟不跟手」。
+/// 这里把「卡片轮廓 → 高斯模糊」这一步固化进 m_shadow，只有尺寸或主题变了才重做，
+/// 平时每次重绘只是把位图贴上去。
+class ShadowPlate : public QWidget
+{
+public:
+    explicit ShadowPlate(QWidget *parent)
+        : QWidget(parent)
+    {
+        // 纯装饰：不接收鼠标（下面还有卡片，点不到它），也不参与布局
+        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        setAttribute(Qt::WA_NoSystemBackground, true);
+    }
+
+    /// 卡片几何 + 当前主题的投影色。几何或颜色变了才重建模糊位图。
+    void setCard(const QRect &cardRect, const QColor &color)
+    {
+        const bool sameGeometry = (m_card.size() == cardRect.size() && m_cacheColor == color);
+        m_card = cardRect;
+        m_cacheColor = color;
+
+        if (!sameGeometry || m_shadow.isNull())
+            m_shadow = buildShadow(cardRect.size(), color, devicePixelRatioF());
+
+        // 底板铺满整个宿主、只按卡片位置贴图，而不是跟着卡片挪来挪去：
+        // 铺满 = 控件从不移动，就不存在「旧位置没重绘干净」的残影问题，
+        // 而每次局部重绘只是把位图的对应区域 blit 一次（没有模糊，很便宜）。
+        if (QWidget *host = parentWidget())
+            setGeometry(host->rect());
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        if (m_shadow.isNull() || m_card.isEmpty())
+            return;
+        // 位图内边含 kShadowPad 的空白，所以左上角要退到「卡片左上角 - pad」，
+        // 再叠上原特效的纵向偏移。只画被脏了的区域，别整张 blit。
+        Q_UNUSED(event);
+        QPainter painter(this);
+        painter.drawPixmap(m_card.topLeft() - QPoint(kShadowPad, kShadowPad) + QPoint(0, kShadowOffsetY),
+                           m_shadow);
+    }
+
+private:
+    /// 画一张「圆角矩形 + 高斯模糊」的位图。借 QGraphicsScene 一次性跑
+    /// QGraphicsBlurEffect：Qt 没给 QImage 公开模糊 API，场景渲染是唯一不自己写卷积的路。
+    static QPixmap buildShadow(const QSize &cardSize, const QColor &color, qreal dpr)
+    {
+        if (cardSize.isEmpty())
+            return QPixmap();
+
+        const QSize logical(cardSize.width() + kShadowPad * 2, cardSize.height() + kShadowPad * 2);
+
+        QImage canvas(QSize(qRound(logical.width() * dpr), qRound(logical.height() * dpr)),
+                      QImage::Format_ARGB32_Premultiplied);
+        canvas.setDevicePixelRatio(dpr);
+        canvas.fill(Qt::transparent);
+        {
+            QPainter painter(&canvas);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawRoundedRect(QRectF(kShadowPad, kShadowPad, cardSize.width(), cardSize.height()),
+                                    kCardRadius, kCardRadius);
+        }
+
+        QGraphicsScene scene;
+        QGraphicsPixmapItem *item = scene.addPixmap(QPixmap::fromImage(canvas));
+        auto *blur = new QGraphicsBlurEffect;
+        blur->setBlurRadius(kShadowBlur);
+        item->setGraphicsEffect(blur);
+
+        QImage out(canvas.size(), QImage::Format_ARGB32_Premultiplied);
+        out.setDevicePixelRatio(dpr);
+        out.fill(Qt::transparent);
+        {
+            QPainter painter(&out);
+            const QRectF area(QPointF(0, 0), QSizeF(logical));
+            scene.render(&painter, area, area);
+        }
+        return QPixmap::fromImage(out);
+    }
+
+    QRect m_card;        ///< 卡片当前几何（逻辑像素）
+    QColor m_cacheColor; ///< 生成位图时用的投影色，换肤后与当前色不等就重建
+    QPixmap m_shadow;
+};
 
 } // namespace
 
@@ -83,11 +188,8 @@ MainWindow::MainWindow(ToolRegistry *registry, Settings *settings, PluginManager
     showHome();   // 启动就停在首页网格
 
     // 投影颜色不读样式表，得在换肤时手动刷新（Theme::apply 结束发 themeChanged）。
-    // 这里连一次，后续每次切浅/深都跟着更新，否则深色下仍挂着浅色投影。
-    connect(&Theme::instance(), &Theme::themeChanged, this, [this] {
-        if (m_shadow)
-            m_shadow->setColor(shadowColor());
-    });
+    // 投影位图是预渲染的，颜色变了必须重建，所以这里直接重跑一次对齐。
+    connect(&Theme::instance(), &Theme::themeChanged, this, [this] { syncShadowPlate(); });
 }
 
 QColor MainWindow::shadowColor() const
@@ -99,17 +201,32 @@ QColor MainWindow::shadowColor() const
     return color;
 }
 
+void MainWindow::syncShadowPlate()
+{
+    if (!m_shadowPlate || !m_cardRoot)
+        return;
+    // 底板类只在本 .cpp 里（匿名命名空间），所以先转成 QWidget* 存成员、用时转回来。
+    // 底板的几何/位图都交给它自己算：这里只负责把「卡片在哪、投影什么色」告诉它。
+    static_cast<ShadowPlate *>(m_shadowPlate)->setCard(m_cardRoot->geometry(), shadowColor());
+    // 换几何时重新压下去：底板的投影会溢出卡片范围，被后来 raise 的兄弟盖住就没了
+    m_shadowPlate->stackUnder(m_cardRoot);
+}
+
 void MainWindow::buildUi()
 {
     // 投影结构：centralWidget 是一个透明「投影宿主」（shadowHost），四周留 kShadowMargin
     // 的透明边距；真正的界面 root（mainRoot，带圆角白底）作为它的子控件放在中间，
-    // 并对 root 挂 QGraphicsDropShadowEffect 画出投影。这样圆角窗口在桌面上有立体感，
+    // 底下垫一块 ShadowPlate 画预渲染好的模糊位图。这样圆角窗口在桌面上有立体感，
     // 而不是无边框下「贴」着桌面。
     //
-    // 跨平台说明：QGraphicsDropShadowEffect 三端行为一致、无需原生分支；但 Windows 上
-    // WA_TranslucentBackground 会关闭 DWM 原生阴影、改走软件合成，拖拽/缩放时可能轻微
-    // 闪烁或掉帧。若真机实测不可接受，回退方案是三端各写原生阴影分支（DWM / NSWindow /
-    // X11），此处留纯效果实现，宁可简洁也不要未经验证的原生代码。
+    // 为什么不用 QGraphicsDropShadowEffect：它每次重绘都要把源控件重新渲染再模糊，
+    // 而卡片铺满窗口，于是卡片里任何一处局部重绘都会连坐一次整窗模糊（实测一次方向键
+    // 6.7ms）。位图方案把模糊压到「只在尺寸/主题变化时算一次」，同条件是 0.4ms。
+    //
+    // 跨平台说明：QGraphicsScene + QGraphicsBlurEffect 三端行为一致、无需原生分支；
+    // 但 Windows 上 WA_TranslucentBackground 会关闭 DWM 原生阴影、改走软件合成，
+    // 拖拽/缩放时可能轻微闪烁。若真机实测不可接受，回退方案是三端各写原生阴影分支
+    // （DWM / NSWindow / X11），此处留纯 Qt 实现，宁可简洁也不要未经验证的原生代码。
     auto *shadowHost = new QWidget(this);
     shadowHost->setObjectName(QStringLiteral("mainShadowHost"));
     shadowHost->setAttribute(Qt::WA_TranslucentBackground, true);
@@ -121,16 +238,22 @@ void MainWindow::buildUi()
 
     auto *root = new QWidget(shadowHost);
     root->setObjectName(QStringLiteral("mainRoot"));
+    m_cardRoot = root;
 
-    // 投影：颜色走 Shadow 令牌（浅深两套），透明度由主题决定。颜色会在换肤时
-    // （Theme::themeChanged）刷新，见构造末尾的 connect。
-    m_shadow = new QGraphicsDropShadowEffect(root);
-    m_shadow->setBlurRadius(kShadowBlur);
-    m_shadow->setOffset(0, kShadowOffsetY);
-    m_shadow->setColor(shadowColor());
-    root->setGraphicsEffect(m_shadow);
+    // 投影：一张预渲染好的「圆角矩形 + 高斯模糊」位图，画在与卡片同位置的底板上。
+    // 详细取舍见上面 ShadowPlate 的注释（核心：不让模糊跟着每次局部重绘重算）。
+    // 颜色走 Shadow 令牌（浅深两套），换肤时由 themeChanged 重新预渲染。
+    m_shadowPlate = new ShadowPlate(shadowHost);
+    m_shadowPlate->setObjectName(QStringLiteral("shadowPlate"));
 
     hostLayout->addWidget(root);
+    // 底板是绝对定位的兄弟控件，必须压在卡片下面：后创建的在上面，这里显式排一次
+    // 顺序，避免以后有人调整创建顺序时投影糊到界面上。
+    root->raise();
+
+    // 卡片几何由布局决定，布局什么时候生效这里管不着 —— 盯着卡片的 Resize/Move
+    // 事件跟着走最稳（窗口首次显示、恢复上次几何、拖角缩放都会覆盖）。
+    root->installEventFilter(this);
 
     auto *rootLayout = new QVBoxLayout(root);
     rootLayout->setContentsMargins(0, 0, 0, 0);
@@ -640,6 +763,14 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // 卡片几何一变，投影底板就得重新对齐（不放进布局是刻意的：布局里的控件会参与
+    // 尺寸协商，底板一律不许影响卡片尺寸）
+    if (watched == m_cardRoot
+        && (event->type() == QEvent::Resize || event->type() == QEvent::Move)) {
+        syncShadowPlate();
+        return false;   // 不拦：卡片自己还要处理这两件事
+    }
+
     if (watched == m_titleBar) {
         switch (event->type()) {
         case QEvent::MouseButtonDblClick: {

@@ -783,8 +783,10 @@ add_subdirectory(plugins/mytool)
 
 - 判定顺序：图片 > JSON > 翻译。词里只要出现非拉丁字母（含中文、西里尔、代理对字符）
   就不算英文；裸标量（`123`、`"abc"`、`true`）不算 JSON —— 它们与普通搜索词无法区分。
-- **建议优先于第一个搜索结果**：`m_currentIndex < 0`（还没按方向键挑磁贴）时回车走建议，
-  按过方向键就按选中的磁贴走。这条要保住，否则用户回车会莫名打开别的东西。
+- **建议优先于第一个搜索结果**：`!m_currentByUser`（用户还没自己挑过磁贴，只是默认高亮在第一项）时
+  回车走建议，挑过（方向键或点击，`m_currentByUser = true`）就按选中的磁贴走。这条要保住，
+  否则用户回车会莫名打开别的东西。**判据必须是 `m_currentByUser`，不能是 `m_currentIndex < 0`**：
+  首页默认就选中第一项，下标永远有效。
 - 目标插件没加载时**不显示建议**（去掉 `m_intentData`），宁可什么都不给也不要摆一条回车没反应的建议。
 - 粘贴图片会清空搜索框里的文字；之后用户再打字会自动丢掉待处理图片（文字优先）。
   `✕`、`Esc`、热键呼出、`--search` 都会同时清掉图片。
@@ -920,7 +922,12 @@ add_subdirectory(plugins/mytool)
 - 页面是三层栈：`HomePage`（首页网格，页头隐藏）/ `SettingsPage` / 动态工具面板。
   页头在工具页与设置页显示，含「← 首页」、标题/描述、「独立窗口」（设置页隐藏）。
 - 首页网格：磁贴固定 `104×100`（图标 48），列数 = `(视口宽 - 2*28 - 12) / (104 + 8)`。
-  **恒定扣掉 12px 滚动条预留**，见踩坑表。键盘：`←→` 移一格、`↑↓` 移一行、`Enter` 开当前项。
+  **恒定扣掉 12px 滚动条预留**，见踩坑表。键盘：`←→` 移一格、`↑↓` 移一行、`Enter` 开当前项；
+  网格**默认选中第一项**（`rebuild()` 末尾 `setCurrentIndex(0)`），所以按键是直接移动而不是先点亮。
+  上下移动按**二维网格**算（`HomePage::moveCurrentBy`：定位到「第几组第几行第几列」再换算下标），
+  不能写成「下标 ± 列数」——分组各自从第 0 行起排，组末行不满时下标与视觉位置不连续，
+  按下标加减会落到眼睛看不到的地方。`←→` 与文本编辑共用：光标没顶到头的方向交给
+  `QLineEdit`，带 `Shift/Ctrl/Alt` 的一律不管（见 HomePage.h 顶部的约定）。
 - 搜索时工具与本机应用分两组（「工具」「本机应用」），磁贴顺序 = 键盘导航顺序：
   最近使用 → 工具结果 → 应用结果。空关键词时应用不展示（只可能出现在「最近使用」里）。
 - 独立窗口 `ToolWindow`：原生边框（不加 `FramelessWindowHint`、不用 `Qt::Tool`），
@@ -937,8 +944,10 @@ add_subdirectory(plugins/mytool)
   `#pagePopout` `#toolTitle` `#toolDesc` `#toolStack` `#toolWindowRoot`；按钮用 `[accent="true"]`。
   插件内的 `#jsonCompleterPopup`（QCompleter 的补全弹窗）也在这份全局 qss 里 —— 弹窗是
   顶层 `QAbstractItemView`，只能靠 objectName 命中，见踩坑表。
-- 磁贴的 hover / 键盘选中走**动态属性**（`#launcherTile[hovered="true"]`、`#launcherTile[current="true"]`），
-  不用 `:hover` —— QWidget 子类的 `:hover` 依赖样式引擎主动打 `WA_Hover`，跨版本不保证触发。
+- 磁贴的 hover / 键盘选中**不在 qss 里**：由 `LauncherTile::paintEvent` 自绘圆角底色
+  （色值走 `theme::color(AccentSoft / AccentSoftStrong / BorderAccentStrong)`），qss 的
+  `#launcherTile` 只留圆角尺寸与那 1px 透明边框。原因：动态属性要配 `unpolish/polish` 才生效，
+  而它会重算子控件样式并标脏几何，方向键连按时每步都重排一次（见踩坑表）。
 - 全局 `QPushButton` 带 `padding: 6px 14px`，**小按钮统一打 `compact=true` 属性**（
   `QPushButton[compact="true"] { min-height: 0px }`），不要再各写一遍 `padding:0; min-height:0`。
   收敛边界：`compact` 只清 `min-height`（14 个按钮唯一共性）；`padding` 各按钮不统一、仍留在
@@ -953,10 +962,13 @@ add_subdirectory(plugins/mytool)
   再写死 `28` —— 之前 MainWindow / HomePage / 24 个插件各写一份，改起来必然漏。
 - **按钮焦点态**：全局 `QPushButton:focus` 用 `@accent` 边框表达；`accent` 按钮用 `@accent-hover`
   底色；无边框按钮（标题栏三个）只能用 `@bg-subtle` 底色（`border:none` 画不出边框）。
-- **主窗口投影**：无边框窗口靠 `QGraphicsDropShadowEffect` + 透明边距容器（`#mainShadowHost`）实现，
+- **主窗口投影**：无边框窗口靠「透明边距容器（`#mainShadowHost`）+ 预渲染模糊位图」实现，
   颜色走 `@shadow` 令牌、透明度在 `MainWindow::shadowColor()` 里按主题调；换肤时 `Theme::themeChanged`
-  触发刷新。投影宿主是 centralWidget，`QSizeGrip` 挂宿主上、`resizeEvent` 定位要扣掉投影边距，
-  见踩坑表。
+  触发 `syncShadowPlate()` 重建位图。**不要退回 `QGraphicsDropShadowEffect`**：它每次重绘都要
+  重新渲染源控件再模糊，卡片铺满窗口 ⇒ 任何局部重绘都连坐一次整窗模糊（实测一次方向键
+  6.7ms）。位图由 `ShadowPlate::buildShadow()` 用 `QGraphicsScene` + `QGraphicsBlurEffect`
+  一次性生成，尺寸/颜色不变就复用，平时只是 blit（0.4ms）。投影宿主是 centralWidget，
+  `QSizeGrip` 挂宿主上、`resizeEvent` 定位要扣掉投影边距，见踩坑表。
 - qss 通过 `.qrc` 编进二进制（`CMAKE_AUTORCC ON`），路径固定 `:/style.qss`；改完不用改代码，重编即可。
 
 ## JSON 编辑器（`plugins/jsonfmt`，插件内部）
@@ -1606,7 +1618,11 @@ add_subdirectory(plugins/mytool)
 | `package.bat` 打包时报 `vc_redist.x64.exe` 拒绝访问 | `windeployqt` 默认塞 25 MB 的 redist 安装器，且该文件被占用 | `--no-compiler-runtime` + 拷 app-local CRT DLL，prune 脚本里再兜底删一次 |
 | 安装器向导中文乱码 | `.iss` 被某次编辑存成了 GBK 或带 BOM 的 UTF-8 | 保持 UTF-8 无 BOM（Inno 6 能识别）；仍乱码就改存 UTF-8 with BOM，**不要改文案**（规则 5） |
 | 深色下改了卡片背景，分组框标题后挂一块色斑 | `QGroupBox::title` 用 `background` 压在边框上「割」开边框，这个底色必须等于**盒子自身底色**（不是页面底色）。旧代码盒子=页面同色时两者相等，一旦给盒子换 `@card` 而标题仍是 `@bg`，标题后那块就露馅 | 盒子和 `::title` 的 `background` 必须同步改（现在都走 `@card`），记住不变量是「title == box」 |
-| 主窗口加了投影后，缩放抓手飘到透明阴影区、或投影被裁掉 | ① `QGraphicsDropShadowEffect` 画在控件矩形外，超出窗口的部分直接不可见，四周不留透明边距阴影就出不来；② `QSizeGrip` 若还挂在带投影的 root 上会被投影「糊」一圈，且原定位 `width()-18` 会把抓手贴到透明阴影区而不是圆角卡片右下角 | 投影宿主（centralWidget）四周留 `kShadowMargin`（≥ blurRadius 的一半）；抓手挂宿主、`resizeEvent` 定位扣掉 `kShadowMargin` |
+| 主窗口加了投影后，缩放抓手飘到透明阴影区、或投影被裁掉 | ① 投影画在卡片矩形外，超出窗口的部分直接不可见，四周不留透明边距阴影就出不来；② `QSizeGrip` 若还挂在带投影的 root 上会被投影「糊」一圈，且原定位 `width()-18` 会把抓手贴到透明阴影区而不是圆角卡片右下角 | 投影宿主（centralWidget）四周留 `kShadowMargin`（≥ blurRadius 的一半）；抓手挂宿主、`resizeEvent` 定位扣掉 `kShadowMargin` |
+| 首页方向键选磁贴「不跟手」，hover 也发涩；把投影特效关掉就顺了 | `QGraphicsDropShadowEffect` 挂在铺满窗口的卡片上：**每次源控件重绘**都要把整窗重新渲染成 pixmap 再模糊一遍。卡片里任何局部重绘（磁贴高亮、光标闪烁、滚动）都连坐一次整窗模糊，实测一次方向键 6.7ms | 投影改成预渲染位图（`ShadowPlate::buildShadow()` 用 `QGraphicsScene`+`QGraphicsBlurEffect` 生成一次，尺寸/主题不变就复用），平时只 blit ⇒ 0.4ms。**别把特效挂回卡片上** |
+| 磁贴高亮改动态属性后，方向键连按仍发涩（即使没有投影） | `setProperty` + `unpolish/polish` 会让磁贴连同子控件重算样式、并把几何标脏，每一步按键都触发一轮重排 | 选中/hover 底色改由 `LauncherTile::paintEvent` 自绘（色值走 `theme::color`），状态变化只 `update()`；角标提亮用 `theme::applyStyle` 直接套在小标签上 |
+| 方向键在分组之间乱跳，落在视觉上毫不相干的位置 | 导航写成「下标 ± 列数」：分组各自从第 0 行起排、组末行不满时，下标与视觉位置不连续 | 按二维网格算（`HomePage::moveCurrentBy`：先定位「第几组/第几行/第几列」再换算下标），跨组时列对齐、越界退到该行最后一项 |
+| 搜索框里按左右键，光标不动了 | 左右键被网格导航无条件吞掉 | 只接管「光标已经顶到该方向尽头」的那一次；带 Shift/Ctrl/Alt 的一律放行（`HomePage::eventFilter`） |
 | 小按钮收敛到 `compact` 后，某个按钮的高度突然不对了 | `compact` 只清 `min-height`，但个别小按钮的 `padding` 各不统一（0 / 2px / 3px 6px …），若把 padding 也塞进 compact 会把不同按钮的 padding 抹成一致、高度失配 | compact 收敛边界：只清 `min-height`；`padding`、`font-size`、`:checked`/`:hover` 状态色一律留在各 objectName 选择器 |
 | 打包报 `'C:\Program' is not recognized` | `%ProgramFiles(x86)%` 写在 `if (...)` 块内，`(x86)` 的 `)` 提前闭合块，剩余文本被当成命令执行 | 把这段逻辑挪出块（标签子程序 + `goto`），块内不要出现带括号的路径变量 |
 | 装好的 ISCC 找不到，或报 `"" 不是内部或外部命令` | 同一个块里先 `set` 再 `%VAR%`：整块在解析期就展开完了，读到的是空值 | 同上；确实要在块内取值就 `setlocal enabledelayedexpansion` 后用 `!VAR!` |

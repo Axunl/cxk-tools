@@ -39,7 +39,6 @@ class Settings;
 class SettingsPage;
 class ToolRegistry;
 class ToolWindow;
-class QGraphicsDropShadowEffect;
 class QLabel;
 class QPropertyAnimation;
 class QPushButton;
@@ -138,6 +137,10 @@ private:
     /// 当前主题下的投影颜色（浅色偏浅、深色更不透明）。换肤时随 Theme::themeChanged 刷新。
     QColor shadowColor() const;
 
+    /// 把投影底板对齐到卡片几何。底板是绝对定位的装饰控件，不进布局，
+    /// 只能靠卡片的 Resize/Move 事件跟着走（见 buildUi 里投影那段说明）。
+    void syncShadowPlate();
+
     ToolRegistry *m_registry = nullptr;
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
@@ -145,7 +148,10 @@ private:
 
     QWidget *m_titleBar = nullptr;
     QLabel *m_hotkeyHint = nullptr;   ///< 标题栏上的热键提示，改热键时要同步刷新
-    QGraphicsDropShadowEffect *m_shadow = nullptr;   ///< 主窗口投影，换肤时刷新颜色
+    /// 投影的「源」：与 m_cardRoot 同尺寸的底板，画一张预渲染好的模糊位图。
+    /// 类型是 QWidget* 因为具体的 ShadowPlate 只存在于 MainWindow.cpp 里。
+    QWidget *m_shadowPlate = nullptr;
+    QWidget *m_cardRoot = nullptr;   ///< 真正的界面卡片（圆角白底），投影底板跟着它走
 
     QWidget *m_pageHeader = nullptr;   ///< 工具页/设置页的页头，首页时整块隐藏
     QPushButton *m_pageBack = nullptr;
