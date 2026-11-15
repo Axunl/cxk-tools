@@ -217,6 +217,7 @@ cxk-tools/
 │   ├── cron/{CronTool.*, CronPanel.*, CronExpr.h}
 │   ├── jwt/{JwtTool.*, JwtLogic.h}
 │   ├── md5/{Md5Tool.*, Md5Logic.h}
+│   ├── passwordgen/{PasswordGenTool.*, PasswordGenLogic.h}
 │   ├── regex/{RegexTool.*, RegexPanel.*, RegexMatch.h}
 │   ├── textkit/{TextKitTool.*, TextKitPanel.*, TextLines.h, TextDiff.h}
 │   ├── websocket/{WebSocketTool.*, WebSocketPanel.*, WsClient.*, WsServer.*, WsProtocol.h}
