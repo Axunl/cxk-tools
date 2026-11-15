@@ -3,6 +3,7 @@
 #include "ITool.h"
 #include "LayoutMetrics.h"
 #include "Log.h"
+#include "NetProxy.h"
 #include "PluginManager.h"
 #include "Settings.h"
 #include "Theme.h"
@@ -14,9 +15,11 @@
 #include <QDir>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIntValidator>
 #include <QKeyCombination>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStyle>
@@ -357,6 +360,94 @@ QWidget *SettingsPage::buildUpdateGroup()
     m_autoCheck->setChecked(m_settings ? m_settings->autoCheckUpdate() : true);
     layout->addWidget(m_autoCheck);
 
+    // ---- 网络代理（只作用于更新：清单与安装包都在 GitHub 上）
+    //
+    // 为什么做成三选一而不是一个"使用代理"开关：国内多数人是"开着 Clash 但没开系统
+    // 代理"，程序必须自己找得到那个端口；也有人走公司代理，得手填；还有人拉了专线，
+    // 代理反而是负担。三种诉求没法用一个勾选框表达。
+    auto *proxyRow = new QHBoxLayout;
+    auto *proxyLabel = new QLabel(QStringLiteral("网络代理"), group);
+    proxyLabel->setMinimumWidth(110);   // 与「常规」分组的标签列对齐
+
+    m_proxyCombo = new QComboBox(group);
+    // 用户文案在前、配置值放 data：配置值是 ini 里存的内容，必须稳定
+    m_proxyCombo->addItem(QStringLiteral("自动（优先使用本机代理）"), QStringLiteral("auto"));
+    m_proxyCombo->addItem(QStringLiteral("不使用代理"), QStringLiteral("direct"));
+    m_proxyCombo->addItem(QStringLiteral("手动指定"), QStringLiteral("manual"));
+    const QString proxyMode = m_settings ? m_settings->proxyMode() : QStringLiteral("auto");
+    m_proxyCombo->setCurrentIndex(qMax(0, m_proxyCombo->findData(proxyMode)));
+
+    proxyRow->addWidget(proxyLabel);
+    proxyRow->addWidget(m_proxyCombo);
+    proxyRow->addStretch(1);
+    layout->addLayout(proxyRow);
+
+    // 手动代理的地址/端口/协议。只在「手动指定」时出现，平时不占地方。
+    m_proxyManualRow = new QWidget(group);
+    auto *manualRow = new QHBoxLayout(m_proxyManualRow);
+    manualRow->setContentsMargins(0, 0, 0, 0);
+    manualRow->setSpacing(8);
+
+    auto *hostLabel = new QLabel(QStringLiteral("地址"), m_proxyManualRow);
+    hostLabel->setMinimumWidth(110);
+    m_proxyHost = new QLineEdit(m_proxyManualRow);
+    m_proxyHost->setPlaceholderText(QStringLiteral("127.0.0.1"));
+    m_proxyHost->setText(m_settings ? m_settings->proxyHost() : QStringLiteral("127.0.0.1"));
+    // 代理地址再长也就 IP/域名，让它铺满整行只会把端口和协议挤到屏幕边上
+    m_proxyHost->setMaximumWidth(220);
+
+    m_proxyPort = new QLineEdit(m_proxyManualRow);
+    m_proxyPort->setValidator(new QIntValidator(1, 65535, m_proxyPort));
+    m_proxyPort->setFixedWidth(90);
+    m_proxyPort->setText(QString::number(m_settings ? m_settings->proxyPort() : 7890));
+
+    m_proxyType = new QComboBox(m_proxyManualRow);
+    m_proxyType->addItem(QStringLiteral("HTTP"), QStringLiteral("http"));
+    m_proxyType->addItem(QStringLiteral("SOCKS5"), QStringLiteral("socks5"));
+    m_proxyType->setCurrentIndex(
+        qMax(0, m_proxyType->findData(m_settings ? m_settings->proxyType() : QStringLiteral("http"))));
+
+    manualRow->addWidget(hostLabel);
+    manualRow->addWidget(m_proxyHost);
+    manualRow->addWidget(new QLabel(QStringLiteral("端口"), m_proxyManualRow));
+    manualRow->addWidget(m_proxyPort);
+    manualRow->addWidget(m_proxyType);
+    manualRow->addStretch(1);
+    layout->addWidget(m_proxyManualRow);
+    m_proxyManualRow->setVisible(proxyMode == QLatin1String("manual"));
+
+    m_proxyHint = new QLabel(group);
+    m_proxyHint->setWordWrap(true);
+    m_proxyHint->setObjectName(QStringLiteral("hint"));
+    layout->addWidget(m_proxyHint);
+
+    connect(m_proxyCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const QString value = m_proxyCombo->itemData(index).toString();
+        if (m_settings)
+            m_settings->setProxyMode(value);
+        if (m_proxyManualRow)
+            m_proxyManualRow->setVisible(value == QLatin1String("manual"));
+        // 立刻重算：用户改完这里多半马上就会点「检查更新」，中间不能留着旧结论
+        NetProxy::reload();
+        refreshProxyHint();
+    });
+    connect(m_proxyHost, &QLineEdit::editingFinished, this, [this] {
+        saveManualProxy();
+        NetProxy::reload();
+        refreshProxyHint();
+    });
+    connect(m_proxyPort, &QLineEdit::editingFinished, this, [this] {
+        saveManualProxy();
+        NetProxy::reload();
+        refreshProxyHint();
+    });
+    connect(m_proxyType, &QComboBox::currentIndexChanged, this, [this] {
+        saveManualProxy();
+        NetProxy::reload();
+        refreshProxyHint();
+    });
+    refreshProxyHint();
+
     m_updateStatus = new QLabel(group);
     m_updateStatus->setWordWrap(true);
     m_updateStatus->setObjectName(QStringLiteral("hint"));
@@ -366,7 +457,8 @@ QWidget *SettingsPage::buildUpdateGroup()
 
     auto *tip = new QLabel(
         QStringLiteral("更新包来自 GitHub Releases。安装版下载后会自动静默升级；"
-                       "便携版只下载压缩包，解压覆盖由你决定。"),
+                       "便携版只下载压缩包，解压覆盖由你决定。代理只用于检查更新与下载，"
+                       "插件里其他联网功能不受影响。"),
         group);
     tip->setWordWrap(true);
     tip->setObjectName(QStringLiteral("hint"));
@@ -403,6 +495,35 @@ void SettingsPage::setUpdateChecking(bool checking)
         setHintState(m_updateStatus, QString());
         m_updateStatus->show();
     }
+}
+
+void SettingsPage::saveManualProxy()
+{
+    if (!m_settings)
+        return;
+    m_settings->setProxyHost(m_proxyHost->text());
+    m_settings->setProxyType(m_proxyType->currentData().toString());
+
+    // 端口是手输的：只有落在 1..65535 才落盘。写坏了会得到一个永远连不通的代理，
+    // 而界面上的"检查更新失败"完全看不出是端口的问题，不如保留上一个有效值。
+    bool ok = false;
+    const int port = m_proxyPort->text().trimmed().toInt(&ok);
+    if (ok && port > 0 && port <= 65535) {
+        m_settings->setProxyPort(port);
+    } else if (!m_proxyPort->text().trimmed().isEmpty()) {
+        // 非法输入直接回填上一个有效端口，别让框里留着一个根本用不了的值
+        m_proxyPort->setText(QString::number(m_settings->proxyPort()));
+    }
+}
+
+void SettingsPage::refreshProxyHint()
+{
+    if (!m_proxyHint)
+        return;
+    // 直接问 NetProxy 而不是按设置拼文案：用户需要知道的是"实际用了什么"，
+    // 自动模式下这句话可能是「系统代理」「环境变量 HTTPS_PROXY」「本机代理（Clash）」
+    // 或「没找到代理」，光看设置项区分不出来。
+    m_proxyHint->setText(QStringLiteral("当前使用：%1").arg(NetProxy::statusText()));
 }
 
 QWidget *SettingsPage::buildAboutGroup()

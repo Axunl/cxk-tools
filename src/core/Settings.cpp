@@ -35,6 +35,16 @@ constexpr auto kGroupUpdate = "update";
 constexpr auto kKeyAutoCheck = "auto_check";
 constexpr auto kKeyLastCheck = "last_check";
 constexpr auto kKeySkippedVersion = "skipped_version";
+/// 网络代理（见 NetProxy）：network/mode、network/type、network/host、network/port。
+constexpr auto kGroupNetwork = "network";
+constexpr auto kKeyProxyMode = "mode";
+constexpr auto kKeyProxyType = "type";
+constexpr auto kKeyProxyHost = "host";
+constexpr auto kKeyProxyPort = "port";
+/// 手动代理的默认值：Clash 的混合端口。国内用户几乎都在这上面，
+/// 让他从「自动」切到「手动」时不用先查自己的端口号。
+constexpr auto kDefaultProxyHost = "127.0.0.1";
+constexpr int kDefaultProxyPort = 7890;
 
 #ifdef Q_OS_WIN
 constexpr auto kRunKeyPath = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -298,6 +308,81 @@ void Settings::setSkippedVersion(const QString &version)
 {
     m_settings.setValue(QLatin1String(kGroupUpdate) + QLatin1Char('/') + QLatin1String(kKeySkippedVersion),
                         version);
+    m_settings.sync();
+}
+
+QString Settings::proxyMode() const
+{
+    // 默认 auto：国内不配代理就下载不动，让用户先踩一次坑再去找开关毫无意义。
+    // 取值只认 auto / direct / manual，其他（手工写坏了）按 auto 处理。
+    const QString mode =
+        m_settings.value(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyMode),
+                         QStringLiteral("auto"))
+            .toString()
+            .trimmed()
+            .toLower();
+    if (mode == QLatin1String("direct") || mode == QLatin1String("manual"))
+        return mode;
+    return QStringLiteral("auto");
+}
+
+void Settings::setProxyMode(const QString &mode)
+{
+    m_settings.setValue(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyMode),
+                        mode);
+    m_settings.sync();
+}
+
+QString Settings::proxyType() const
+{
+    const QString type =
+        m_settings.value(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyType),
+                         QStringLiteral("http"))
+            .toString()
+            .trimmed()
+            .toLower();
+    return type == QLatin1String("socks5") ? type : QStringLiteral("http");
+}
+
+void Settings::setProxyType(const QString &type)
+{
+    m_settings.setValue(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyType),
+                        type);
+    m_settings.sync();
+}
+
+QString Settings::proxyHost() const
+{
+    const QString host =
+        m_settings.value(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyHost),
+                         QString::fromLatin1(kDefaultProxyHost))
+            .toString()
+            .trimmed();
+    return host.isEmpty() ? QString::fromLatin1(kDefaultProxyHost) : host;
+}
+
+void Settings::setProxyHost(const QString &host)
+{
+    m_settings.setValue(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyHost),
+                        host.trimmed());
+    m_settings.sync();
+}
+
+int Settings::proxyPort() const
+{
+    // 端口非法（0、负数、超过 65535）一律回默认：这是手工编辑 ini 最容易写坏的一项，
+    // 而接不通的端口会让"检查更新"直接失败，比回默认值难查得多。
+    const int port =
+        m_settings.value(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyPort),
+                         kDefaultProxyPort)
+            .toInt();
+    return (port > 0 && port <= 65535) ? port : kDefaultProxyPort;
+}
+
+void Settings::setProxyPort(int port)
+{
+    m_settings.setValue(QLatin1String(kGroupNetwork) + QLatin1Char('/') + QLatin1String(kKeyProxyPort),
+                        port);
     m_settings.sync();
 }
 

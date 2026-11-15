@@ -17,6 +17,7 @@ class PluginManager;
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 
 /// 点击后进入"捕获"状态，按下的第一个带修饰键的组合即生效。
 class HotkeyButton : public QPushButton
@@ -81,6 +82,13 @@ private:
     QWidget *buildUpdateGroup();
     QWidget *buildAboutGroup();
 
+    /// 手动代理那一行的读写（切到「手动指定」时才有意义）。
+    /// 每次改动都要落盘，否则用户填完直接关窗口，值就丢了。
+    void saveManualProxy();
+    /// 「当前使用：…」那行小字：把 NetProxy 解析出来的真实结果回显给用户，
+    /// 免得"设了代理到底生效没有"只能靠猜。
+    void refreshProxyHint();
+
     Settings *m_settings = nullptr;
     PluginManager *m_plugins = nullptr;
     HotkeyButton *m_hotkeyButton = nullptr;
@@ -89,4 +97,10 @@ private:
     QPushButton *m_updateButton = nullptr;
     QLabel *m_updateStatus = nullptr;
     QCheckBox *m_autoCheck = nullptr;
+    QComboBox *m_proxyCombo = nullptr;
+    QComboBox *m_proxyType = nullptr;
+    QLineEdit *m_proxyHost = nullptr;
+    QLineEdit *m_proxyPort = nullptr;
+    QWidget *m_proxyManualRow = nullptr;
+    QLabel *m_proxyHint = nullptr;
 };

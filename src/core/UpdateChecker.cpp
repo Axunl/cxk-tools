@@ -1,5 +1,6 @@
 #include "UpdateChecker.h"
 
+#include "NetProxy.h"
 #include "Settings.h"
 
 #include <QCoreApplication>
@@ -7,8 +8,6 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
-#include <QNetworkProxy>
-#include <QNetworkProxyFactory>
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QStandardPaths>
@@ -110,19 +109,23 @@ QString bytesText(qint64 bytes)
 UpdateChecker::UpdateChecker(QObject *parent)
     : QObject(parent)
 {
-    // 只给"更新"这一个 manager 套系统代理（Windows 读 WinINET 设置，含 PAC）。
-    //
-    // 为什么不全局 QNetworkProxyFactory::setUseSystemConfiguration：那会连带改掉所有插件
-    // 的网络行为，超出「修更新」的范围。而更新恰恰必须和浏览器保持一致——用户靠代理
-    // 能打开 GitHub，程序却直连，用户看到的就是"永远下不动"，还查不出原因。
-    // 没配代理时这里拿到的是 NoProxy，等于什么都不做。
-    const QList<QNetworkProxy> proxies = QNetworkProxyFactory::systemProxyForQuery(
-        QNetworkProxyQuery(QUrl(QString::fromLatin1(kFeedUrl))));
-    if (!proxies.isEmpty() && proxies.first().type() != QNetworkProxy::NoProxy) {
-        m_nam.setProxy(proxies.first());
-        qInfo() << "UpdateChecker: 使用系统代理" << proxies.first().hostName()
-                << proxies.first().port();
-    }
+    // 只给"更新"这一个 manager 套代理（不走全局），解析顺序见 NetProxy：
+    // 环境变量 → 系统代理 → 本机常见代理端口探测 → 直连。
+    // 为什么必须自己找出本机代理而不是只读系统设置：国内大多数人开着 Clash 但没开
+    // 「系统代理」，系统 API 一无所获，程序直连 GitHub 就是几十 KB/s 或直接不动——
+    // 用户看到的就是"更新永远下不完"，还查不出原因（2026-11-15 实际踩过）。
+    const NetProxy::Choice choice = NetProxy::forUrl(feedUrl());
+    m_nam.setProxy(choice.proxy);
+    qInfo().noquote() << "UpdateChecker: 代理 →"
+                      << (choice.isDirect() ? QStringLiteral("直连（%1）").arg(choice.source)
+                                            : QStringLiteral("%1 %2").arg(choice.source,
+                                                                           NetProxy::describe(choice.proxy)));
+}
+
+void UpdateChecker::applyProxy(const QUrl &url)
+{
+    // 返回的是 NoProxy 时 setProxy 等于"直连"，不用额外分支
+    m_nam.setProxy(NetProxy::forUrl(url).proxy);
 }
 
 UpdateChecker::~UpdateChecker()
@@ -180,6 +183,10 @@ void UpdateChecker::check()
 {
     m_silent = false;
 
+    // 用户手点「检查更新」是最该重新探测代理的时机：典型场景就是上次直连失败、
+    // 用户去把 Clash 打开，然后再点一次。
+    NetProxy::invalidate();
+
     // 换一代代号：正在飞的请求与已经排队的重试回调都会认出自己过期而退出。
     // 用户连点两下「检查更新」不该压两条请求，也不该让旧结果覆盖新结果。
     ++m_feedGeneration;
@@ -199,6 +206,10 @@ void UpdateChecker::requestFeed()
 
 void UpdateChecker::fireFeedRequest(int generation)
 {
+    // 每一次尝试（含重试）都重新对一次代理：设置页可能刚改过，
+    // 或者用户刚把代理客户端打开。
+    applyProxy(feedUrl());
+
     QNetworkRequest request(feedUrl());
     request.setTransferTimeout(kFeedTimeoutMs);
     m_currentTimeoutMs = kFeedTimeoutMs;
@@ -239,6 +250,8 @@ void UpdateChecker::handleFeedFinished(QNetworkReply *reply, int generation)
             QTimer::singleShot(delay, this, [this, generation] {
                 if (generation != m_feedGeneration)
                     return;
+                // 重试前重探一次代理：用户很可能就是在这几秒里把代理客户端开起来的
+                NetProxy::invalidate();
                 fireFeedRequest(generation);
             });
             return;
@@ -371,6 +384,11 @@ void UpdateChecker::startAttempt()
     m_retryPending = false;
     m_rangeChecked = false;
     m_attemptBase = m_received;
+
+    // 下载域名（objects.githubusercontent.com 之类）与清单域名不一定相同，
+    // 按真实地址对一次代理：NO_PROXY 是按主机匹配的，不能沿用清单那次的结论。
+    // 每次重连都走这里，所以断流期间用户开了代理也能接上。
+    applyProxy(m_downloadAsset.url);
 
     // 有断点就用 Append 接着写，没有就新建。不能用 ReadWrite 覆盖写：
     // 那样一续传就把前面下好的数据抹了。

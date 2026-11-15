@@ -69,6 +69,24 @@ public:
     QString skippedVersion() const;
     void setSkippedVersion(const QString &version);
 
+    /// 网络代理模式："auto"（默认，依次试环境变量 / 系统代理 / 本机常见端口）/
+    /// "direct"（一律直连）/ "manual"（用下面的 host+port+type）。
+    /// 存字符串的理由同主题：ini 是给人看的，写 "auto" 比写 "0" 清楚。
+    QString proxyMode() const;
+    void setProxyMode(const QString &mode);
+
+    /// 手动代理的协议（"http" / "socks5"）。auto 模式用不到，留着是为了
+    /// 用户从「自动」切到「手动」时上次填的值还在。
+    QString proxyType() const;
+    void setProxyType(const QString &type);
+
+    /// 手动代理的主机与端口。默认 127.0.0.1:7890（Clash 的混合端口），
+    /// 也就是国内最常见的本机代理。
+    QString proxyHost() const;
+    void setProxyHost(const QString &host);
+    int proxyPort() const;
+    void setProxyPort(int port);
+
     QString configFilePath() const;
     void sync();
 

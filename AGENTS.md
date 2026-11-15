@@ -179,6 +179,8 @@ cxk-tools/
 │   │   ├── QueryIntent.h       纯逻辑：识别「JSON / 图片 / 英文」三种搜索意图（可单测）
 │   │   ├── QuickCalc.h         纯逻辑：判定「这段输入该不该当算式算」+ 就地求值（可单测）
 │   │   ├── LocalAppIndex.*     本机应用索引（开始菜单 / .app / .desktop）+ 启动
+│   │   ├── NetProxy.*          更新链路的代理解析：环境变量 → 系统代理 → 本机常见端口探测
+│   │   │                       （Clash/v2rayN/SS，带握手验证）；纯函数部分可单测
 │   │   ├── Pinyin.*            汉字→拼音/缩写（纯逻辑，可单测）；拼音表见下一条
 │   │   ├── PinyinData.*        生成的读音表（U+4E00–U+9FFF，勿手改，见 gen-pinyin-data.py）
 │   │   ├── PluginManager.*     扫描 plugins/ 并用 QPluginLoader 加载
@@ -597,11 +599,16 @@ https://github.com/Axunl/cxk-tools/releases/latest/download/latest.json
 
 **下载链路的四条硬约束**（2026-11 修「更新老是失败」时定下的，别拆）：
 
-1. **必须跟随系统代理**。`UpdateChecker` 构造时对**自己这个** `QNetworkAccessManager` 调
-   `systemProxyForQuery()`，不要改成全局 `QNetworkProxyFactory::setUseSystemConfiguration(true)`
-   ——那会顺带改掉所有插件的网络行为。反例就是这次的真实故障：用户开着 `127.0.0.1:7890`
-   的代理，浏览器能开 GitHub，程序直连，于是每次下载都卡死；日志里表现为
-   `下载失败：Operation canceled`，看不出跟代理有关。
+1. **必须跟随本机代理，且只跟随本机代理**。`UpdateChecker` 在每次请求前调
+   `NetProxy::forUrl()` —— 它自己的 `QNetworkAccessManager` 才 `setProxy`，
+   **不要**改成全局 `QNetworkProxyFactory::setUseSystemConfiguration(true)` 或
+   `setApplicationProxyFactory()`：那会顺带改掉所有插件的网络行为（HTTP 调试、WebSocket、
+   局域网共享会连不上自己）。解析顺序是「环境变量 → 系统代理 → 本机端口探测（带握手验证）→ 直连」，
+   其中最后一步不能省：用户开着 Clash 但没开「系统代理」是最常见的状态，只读系统 API 等于没有代理。
+   反例就是 2026-11 的真实故障：用户开着 `127.0.0.1:7890` 的代理、浏览器能开 GitHub，
+   程序直连下载卡死，日志里只有 `下载失败：Operation canceled`，看不出跟代理有关。
+   `NetProxy` 结果有缓存，手动检查（`check()`）与重试前要 `invalidate()`，否则用户"先失败、
+   后开代理"再点检查会一直抱着旧的"直连"结论。
 2. **Qt 的传输超时 = `OperationCanceledError` + `"Operation canceled"`**。这个字符串绝不能直接给用户
    （`describeNetworkError()` 必须逐码翻成中文），否则"网络卡住了"会显示成一句谁也看不懂的英文。
    注意 `setTransferTimeout` 是**空闲**口径（多久没新数据才掐），不是总时长；实测 1 秒超时拦不住
@@ -1607,7 +1614,8 @@ add_subdirectory(plugins/mytool)
 | 设了某个热键后，别的程序里同名快捷键全失效（如 `Ctrl+A` 不能全选） | `RegisterHotKey` 是系统级独占，单修饰键 + 字母这种「常见编辑快捷键」被抢走就全局生效 | 这不是 bug 是全局热键的固有语义：默认值只给 `Ctrl+Alt+Space`，交付时提醒用户别拿单修饰键 + 字母当热键 |
 | 日志写「已注册 Alt+Space」，物理按键却毫无反应；同一台机器上 `SendInput` 合成同一个组合却能唤起 | 按键要先过 `WH_KEYBOARD_LL` 钩子链才进热键匹配，链上某个常驻程序（实测机器上同时跑着 ToDesk / Snipaste / Ditto）把真实按键吃掉，而这类钩子普遍放过 `LLKHF_INJECTED` 事件，所以注入能过、物理按不过 —— 于是「注册成功」和「按键到得了」被解耦了 | Windows 侧再挂一个自己的 `WH_KEYBOARD_LL` 兜底（`installKeyboardHook()`），命中后延迟 150ms，若这期间 `WM_HOTKEY` 到了就不管（防重复唤起）。排查时先搜日志「由键盘钩子兜底唤起」：出现了说明系统热键链路被别家拦了，没出现才是我们自己的问题 |
 | 断言程序里大量 `qInfo` 一行都不打印 | Release 构建下控制台 sink 被摘掉 | 验证程序统一用 `std::printf` + `fflush(stdout)`，别依赖 Qt 日志分类 |
-| 点「下载并安装」每次都失败，状态栏只有 `下载失败：Operation canceled` | ① Qt 把传输超时统一报成 `OperationCanceledError`，`errorString` 就是这句英文，用户完全看不出是网络问题；② 更新请求没读系统代理，用户开着 `127.0.0.1:7890` 的代理、浏览器能开 GitHub，程序却直连 | 错误码逐条翻中文（`UpdateChecker::describeNetworkError`）+ 更新专用的 manager 套 `systemProxyForQuery()`；断流改 `Range` 断点续传。四条硬约束见「更新链路」 |
+| 点「下载并安装」每次都失败，状态栏只有 `下载失败：Operation canceled` | ① Qt 把传输超时统一报成 `OperationCanceledError`，`errorString` 就是这句英文，用户完全看不出是网络问题；② 更新请求没读系统代理，用户开着 `127.0.0.1:7890` 的代理、浏览器能开 GitHub，程序却直连 | 错误码逐条翻中文（`UpdateChecker::describeNetworkError`）+ 更新专用的 manager 经 `NetProxy::forUrl()` 套代理（环境变量/系统代理/本机端口探测）；断流改 `Range` 断点续传。四条硬约束见「更新链路」 |
+| 检查更新一直「已是最新」，装完还是旧版 | GitHub 的 `releases/latest` 按**发布时间**判定，补发一个旧 tag 就会把 latest 抢回旧版本 | `release.yml` 末尾 `gh release edit "$TAG" --latest`（且用 `sort -V` 防降级）；清单版本低于本机时 `UpdateChecker` 打 warning |
 | 界面上的 `▾` 渲染成方块 | 字体缺字形（中文回退字体里没有这个符号） | 换成纯文字的 `QPushButton("切换")`，跨平台别再赌字形 |
 | `--check-update` 跑完进程不退出，被 SIGTERM 杀掉 | 在 `app.exec()` 之前调 `qApp->quit()`，Qt 会忽略这次请求 | 用 `QTimer::singleShot(0, qApp, [code]{ QCoreApplication::exit(code); })` 把退出排进事件循环 |
 | 改完插件链接报 `LNK1104`「无法打开 …\plugins\xxx.dll」 | 上一次 `--shot` 或手动启动的 cxk-tools 还在后台跑着，DLL 被占用（先 `taskkill` 再删 DLL 会"成功"，但链接仍然写不进去） | 构建前 `tasklist \| findstr cxk-tools` 确认没有残留进程，有就结束掉；不要靠删 build 目录绕 |

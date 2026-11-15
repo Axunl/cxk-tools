@@ -13,6 +13,8 @@ set(APP_SOURCES
     core/Log.h
     core/LocalAppIndex.cpp
     core/LocalAppIndex.h
+    core/NetProxy.cpp
+    core/NetProxy.h
     core/PluginManager.cpp
     core/PluginManager.h
     core/Pinyin.cpp

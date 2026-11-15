@@ -27,6 +27,9 @@
 //      所以必须把错误码翻成人话（见 describeNetworkError）。
 //   2) GitHub 的下载域名在境内经常几十 KB/s 甚至断流，一次性下 30MB 只要中途抖一下
 //      就全废。所以下载改成「.part 落盘 + Range 断点续传 + 自动重连」。
+//   3) 国内直连 GitHub 基本不可用，必须让更新走本机代理。代理只作用在本类的
+//      QNetworkAccessManager 上（见 NetProxy），不装全局工厂——插件里的 HTTP 调试、
+//      WebSocket 测试、局域网共享不该被"下更新要用代理"这件事牵连。
 // ---------------------------------------------------------------------------
 
 #include "UpdateInfo.h"
@@ -98,6 +101,10 @@ signals:
     void downloadFailed(const QString &message);
 
 private:
+    /// 按当前设置给这个地址挑代理并套到 m_nam 上（结果缓存在 NetProxy 里，
+    /// 每次请求前调一次即可；设置页改完代理后 NetProxy::reload() 会让它重算）。
+    void applyProxy(const QUrl &url);
+
     void requestFeed();
     /// 发一次清单请求。generation 用来识别"这次请求是否已经过期"（用户连点检查、
     /// 或重试排队期间又发起新请求时，旧回调要自己认命退出）。
