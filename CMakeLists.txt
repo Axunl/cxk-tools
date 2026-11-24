@@ -125,6 +125,7 @@ add_subdirectory(plugins/jsrun)
 add_subdirectory(plugins/sqlfmt)
 add_subdirectory(plugins/frpc)
 add_subdirectory(plugins/passwordgen)
+add_subdirectory(plugins/diskscan)
 
 # ---------------------------------------------------------------------------
 # 把全部插件挂到主程序的依赖链上（必须放在所有 add_subdirectory 之后）。

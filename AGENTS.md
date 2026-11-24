@@ -210,6 +210,7 @@ cxk-tools/
 │   ├── ipquery/{IpQueryTool.*, IpQueryLogic.h}
 │   ├── procmon/{ProcMonTool.*, ProcMonPanel.*, ProcProbe.*, ProcText.h}
 │   ├── filelock/{FileLockTool.*, FileLockLogic.h, FileLockProbe.*, FileLockPanel.*}
+│   ├── diskscan/{DiskScanTool.*, DiskScanPanel.*, DiskScan.h}
 │   ├── translate/{TranslateTool.*, TranslatePanel.*, TranslateLogic.h}
 │   ├── colorpicker/{ColorPickerTool.*, ColorPickerPanel.*, ColorText.h, ColorProbe.h}
 │   ├── screenshot/{ScreenshotTool.*, ScreenshotPanel.*, CaptureOverlay.*, ScrollSession.*,
@@ -1290,6 +1291,57 @@ add_subdirectory(plugins/mytool)
 - 表格用 `QTableWidget` + 第一列 `ItemIsUserCheckable`；重建期间 `m_building` 吞掉
   `itemChanged`，否则会误刷「已选择 N 个程序」。空态与表格放在 `QStackedWidget` 里切换，
   **选页面不能用三元表达式**（`QLabel*` 与 `QTableWidget*` 无隐式转换，MSVC C2446）。
+
+## 磁盘空间（`plugins/diskscan`，插件内部）
+
+- 两层：`DiskScan.h`（纯逻辑：递归统计体积、进度节流、清理风险分级、路径包含判断，
+  不依赖 QWidget，可单独断言）、`DiskScanPanel`（界面 + 后台线程编排）。
+  `DiskScanTool` 只有元信息。
+- **统计口径**：只算普通文件的 `QFileInfo::size`，不含目录项自身、**不跟进符号链接**
+  （跟进会绕圈，记 size 会把目标算两遍），读不进去的子目录记账成 `unreadableDirs`
+  并把该项体积标成下限（界面显示 `≥`）。别为了"和 du 对齐"改成算磁盘块占用 ——
+  资源管理器的「大小」列就是逻辑大小，用户拿两边一对不上会先怀疑工具算错了。
+- **只扫一层**：`scanChildren()` 只统计 root 的直接子项，不下钻返回整棵树（几百万节点既传不回
+  UI 线程也没人看得完），要看下一层就把它当新 root 再扫一次（界面上的双击 / 面包屑）。
+- **分级与清理是两件事**：`classify()` 给 `Recommend / Caution / Protected`，界面的徽章、
+  筛选、按钮可用性都按它来；`trashBlockReason()` 只在 `Protected` 时拦。
+  Protected 是**路径精确匹配**（盘根、`SystemRoot`、`ProgramFiles`、用户主目录、
+  QStandardPaths 的个人资料目录、Windows 根目录下的 `pagefile.sys` 之类），
+  **不拦子目录** —— 清 `C://Windows//Temp` 是正常操作，拦了会让工具没法用。
+- **「说明」与分级同源**：`hintFor()` 的两张规则表（`hintNameRules` 只匹配末级名字、
+  `hintPathRules` 匹配完整路径）既产出界面上那一列人话，也参与 `classify()` ——
+  `tone == Protected` 直接判受保护（`WinSxS`、`hiberfil.sys` 不在路径表里，靠这条兜住），
+  `tone == Recommend` 提前于"个人资料目录→谨慎"（所以桌面下的 `node_modules` 仍是可清理）。
+  想加一种目录，只改规则表，别在界面里写 if：说明、徽章、筛选、一键清理必须永远一致。
+  规则命不中就返回空串，界面留白而不是瞎猜。
+- **找大头是一次遍历**：`findHotspot()` 递归返回每个目录的体积并顺带记下最大的子项，
+  逐层拼成一条链（`walkHot` 里只保留最大那条，其余算完就丢，内存是 O(层数)）。
+  不要改成"每层调一次 `scanChildren` 再选最大" —— 那会把同一棵树扫好几遍
+  （100 GB 的目录要重扫 2~3 倍时间）。链的裁剪规则在函数末尾：第一级无条件保留
+  （"最大的只占 12%"本身也是结论），之后每级要占上一层 ≥25% 且 ≥300 MB。
+- **一键清理只认看得见的行**：`cleanCleanable()` 从表格行反查 `m_items`，不直接筛
+  `m_items` —— 按钮上的"N 项"必须等于用户眼前这几十行，否则被筛选藏起来的项会被顺手删掉。
+  真正的删除仍走 `trashItems()` 的二次确认，确认框里还会把该项目的「说明」再念一遍
+  （"binlog 别直接删"这种话只有在这里才读得到）。
+- **清理只到回收站**：`QFile::moveToTrash()` 三平台都由 Qt 实现（Shell / Finder / XDG trash），
+  不写平台分支，也不提供永久删除。确认框默认按钮是「取消」，超过 20 GB 追加
+  "可能超出回收站配额、系统可能直接永久删除"的警告 —— 用户最容易在"反正能还原"时出事。
+- **线程模型**：`QThread::create` + `std::shared_ptr<std::atomic<bool>>` 取消标志，
+  进度和单项结果都用 `QMetaObject::invokeMethod(this, ..., Qt::QueuedConnection)` 回到 UI 线程；
+  worker 全程不碰成员与控件。面板析构先置取消标志再 `wait()`（`quit()` 打断不了纯计算），
+  已投递的调用由 QObject 析构丢弃。改这里时不要图省事直接 emit 自定义信号 ——
+  多一个带 Q_OBJECT 的 worker 就多一份 moc，而且容易忘了断开。
+- **边扫边出**：每算完一个子项就 `appendItem()`，表格重建用 120ms 单次定时器节流；
+  扫描结束后再用最终 `Result` 覆盖一次 `m_items`，这样"取消"时也不会留下重复行。
+- **UI 细节**：`QComboBox` 自带自绘 `ComboArrow`（全局 qss 消掉了原生箭头，见 PLUGIN.md）；
+  筛选条右侧的汇总标签要 `addWidget(..., 1)` + 右对齐，**不能**让宽度跟着文字走：
+  扫描中它每 120ms 被改写一次，宽度自适应会让这一行左右跳，文字刚变长、布局还没重算时
+  甚至只露出最后一个字；
+  「建议」列与「占比」列是 delegate 自绘（徽章胶囊 / 比例条），颜色全部 `theme::color()` 取，
+  **不能在建表时快照色值**，否则换肤后不跟着变。面包屑用 `QPushButton[link="true"]`
+  而不是 QLabel 富文本 —— 链接色取自 palette，深色主题下重算不到。
+- 清理完会重新扫描当前目录；"已清理 N 项"这类文案存进 `m_pendingStatus`，等这轮扫描收尾
+  才吐到状态栏，否则会被 `startScan` 的进度回调瞬间覆盖。
 
 ## 共享（`plugins/share`，插件内部）
 

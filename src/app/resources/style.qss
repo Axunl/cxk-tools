@@ -859,6 +859,219 @@ QPushButton#flRowAction:hover {
     font-size: 12px;
 }
 
+/* ---------------------------------------------------------------- 磁盘空间 */
+/* 概览卡与进程监控同一套观感：白底 + 细边框 + 大号百分比 */
+#dsCard {
+    background: @card;
+    border: 1px solid @border;
+    border-radius: 10px;
+}
+
+#dsCaption {
+    font-size: 11px;
+    color: @text-faint;
+}
+
+#dsPercent {
+    font-size: 30px;
+    font-weight: 600;
+    color: @text;
+}
+
+#dsPercent[level="warn"] {
+    color: @warn-text;
+}
+
+#dsPercent[level="danger"] {
+    color: @danger;
+}
+
+#dsUsed {
+    font-size: 13px;
+    color: @text-body;
+}
+
+#dsAvail {
+    font-size: 13px;
+    font-weight: 600;
+    color: @text;
+}
+
+QProgressBar#dsDiskBar,
+QProgressBar#dsScanBar {
+    background: @bg-track;
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#dsDiskBar::chunk,
+QProgressBar#dsScanBar::chunk {
+    background: @accent;
+    border-radius: 3px;
+}
+
+QProgressBar#dsDiskBar[level="warn"]::chunk {
+    background: @warn;
+}
+
+QProgressBar#dsDiskBar[level="danger"]::chunk {
+    background: @danger-strong;
+}
+
+QLineEdit#dsPath {
+    padding: 7px 10px;
+}
+
+/* 面包屑：按钮装成链接的样子（透明底、无边框、强调色）。
+   为什么用按钮而不是富文本 <a>：链接色在 QLabel 里取自 palette，
+   深色主题下对比度不够，而且宿主换肤时重算不到它。 */
+QPushButton[link="true"] {
+    background: transparent;
+    border: none;
+    padding: 0px 2px;
+    min-height: 0px;
+    color: @accent;
+    font-size: 12px;
+    text-align: left;
+}
+
+QPushButton[link="true"]:hover {
+    color: @accent-hover;
+}
+
+QPushButton[link="true"]:disabled {
+    color: @text-muted;
+}
+
+#dsCrumbCurrent {
+    font-size: 12px;
+    font-weight: 600;
+    color: @text;
+}
+
+#dsCrumbSep {
+    color: @text-disabled;
+    font-size: 12px;
+}
+
+#dsSummary {
+    font-size: 12px;
+    color: @text-muted;
+}
+
+QCheckBox#dsOnlyCleanable,
+QCheckBox#dsHideSmall {
+    font-size: 12px;
+    color: @text-second;
+}
+
+/* 明细表。只给 ::item 加左右 padding —— 给 view 本身加会把 viewport 撑小，
+   明明没几行也会常驻滚动条。 */
+QTreeWidget#dsTable {
+    background: @card;
+    border: 1px solid @border;
+    border-radius: 10px;
+    outline: none;
+}
+
+QTreeWidget#dsTable::item {
+    padding: 0px 10px;
+    color: @text-body;
+    border-bottom: 1px solid @bg-subtle;
+}
+
+QTreeWidget#dsTable::item:selected {
+    background: @accent-soft;
+    color: @accent-text;
+}
+
+QTreeWidget#dsTable QHeaderView::section {
+    background: @bg-alt;
+    color: @text-muted;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    border-bottom: 1px solid @border;
+    padding: 0px 10px;
+}
+
+#dsEmpty {
+    background: @bg;
+    border: 1px solid @border-subtle;
+    border-radius: 8px;
+    color: @text-faint;
+    font-size: 13px;
+}
+
+#dsStatus {
+    font-size: 12px;
+    color: @text-muted;
+}
+
+#dsStatus[state="warn"] {
+    color: @danger;
+}
+
+#dsHint {
+    font-size: 11px;
+    color: @text-faint;
+}
+
+/* 清理是本插件唯一的破坏性操作，用红色描边把它和「打开」区分开 */
+QPushButton#dsTrash {
+    color: @danger;
+    border-color: @border-danger;
+}
+
+QPushButton#dsTrash:hover {
+    background: @danger-bg;
+    border-color: @danger-strong;
+}
+
+QPushButton#dsTrash:disabled {
+    color: @text-disabled;
+    border-color: @border;
+}
+
+/* 大头条：只有按过「找大头」才出现，用强调色的浅底把它和表格区分开 ——
+   它回答的是"钱花在哪了"，不是一行普通的筛选说明 */
+#dsHotBanner {
+    background: @accent-tint;
+    border: 1px solid @border-accent-soft;
+    border-radius: 8px;
+}
+
+#dsHotChain {
+    font-size: 13px;
+    font-weight: 600;
+    color: @text;
+}
+
+#dsHotHint {
+    font-size: 12px;
+    color: @text-muted;
+}
+
+/* 一键清理：和「移到回收站」同为破坏性操作，同样用红字描边；
+   去掉大内边距才能塞进筛选条那一行 */
+QPushButton#dsCleanAll {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: @danger;
+    border-color: @border-danger;
+}
+
+QPushButton#dsCleanAll:hover {
+    background: @danger-bg;
+    border-color: @danger-strong;
+}
+
+/* 「找大头」是探索性动作而不是危险操作，用普通按钮外观即可；
+   这里只把内边距压小一点，避免它比「扫描」还抢眼 */
+QPushButton#dsHotspot {
+    padding: 6px 12px;
+}
+
 /* 浏览菜单与进程监控的右键菜单共用：不写的话 Qt 给的是系统默认灰菜单，
    和卡片式浅色界面完全不搭 */
 QMenu {
